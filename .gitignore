@@ -1,3 +1,22 @@
+# ── TrustVault-specific ──────────────────────────────────────────────────────
+# Secrets
+.env
+.env.*
+!.env.example
+
+# SQLite databases
+*.db
+*.sqlite
+*.sqlite3
+data/
+
+# Private file uploads
+uploads/
+
+# Session file store (if used)
+sessions/
+
+# ── Node.js ──────────────────────────────────────────────────────────────────
 # Logs
 logs
 *.log

@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Register – TrustVault</title>
+</head>
+<body>
+  <h1>Register</h1>
+  <% if (typeof error !== 'undefined' && error) { %>
+    <p style="color:red;"><%= error %></p>
+  <% } %>
+  <form method="POST" action="/auth/register" autocomplete="off">
+    <label>Email<br>
+      <input type="email" name="email" required maxlength="254" />
+    </label><br><br>
+    <label>Password<br>
+      <input type="password" name="password" required minlength="12" maxlength="128" />
+    </label><br><br>
+    <button type="submit">Create account</button>
+  </form>
+  <p><a href="/auth/login">Already have an account? Sign in</a></p>
+</body>
+</html>
