@@ -1,10 +1,23 @@
 'use strict';
 
-const express = require('express');
-const helmet  = require('helmet');
-const path    = require('path');
+const express        = require('express');
+const helmet         = require('helmet');
+const session        = require('express-session');
+const path           = require('path');
+const FileStore      = require('session-file-store')(session);
 
-function createApp() {
+const { createAuthRouter } = require('./routes/auth');
+const { persist }          = require('./db/database');
+
+/**
+ * Create and configure the Express application.
+ *
+ * @param {import('sql.js').Database|null} db - The open sql.js database
+ *   instance. Pass null (or omit) when the DB is not needed (e.g. health-only
+ *   test environments).
+ * @returns {import('express').Application}
+ */
+function createApp(db = null) {
   const app = express();
 
   // ── Security headers ───────────────────────────────────────────────────────
@@ -18,12 +31,56 @@ function createApp() {
   app.set('view engine', 'ejs');
   app.set('views', path.join(__dirname, 'views'));
 
+  // ── Session middleware ─────────────────────────────────────────────────────
+  // Session secret must be set via SESSION_SECRET environment variable.
+  // session-file-store persists session files under ./sessions/ by default,
+  // which is excluded from Git in .gitignore.
+  const sessionSecret = process.env.SESSION_SECRET;
+  if (!sessionSecret && process.env.NODE_ENV !== 'test') {
+    // Warn loudly in development if the secret is not set.
+    console.warn('[warn] SESSION_SECRET is not set. Set it in your .env file.');
+  }
+
+  const sessionConfig = {
+    name: 'sid',
+    secret: sessionSecret || 'dev-only-insecure-secret',
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,                             // not accessible via JS
+      secure: process.env.NODE_ENV === 'production', // HTTPS only in prod
+      sameSite: 'lax',                            // CSRF mitigation layer
+      maxAge: 2 * 60 * 60 * 1000,                // 2 hours
+    },
+  };
+
+  // Use file store for persistence unless running tests (memory is fine there).
+  if (process.env.NODE_ENV !== 'test') {
+    sessionConfig.store = new FileStore({
+      path: './sessions',
+      ttl: 7200,      // seconds — matches cookie maxAge
+      retries: 0,
+    });
+  }
+
+  app.use(session(sessionConfig));
+
+  // ── Expose persist() so route handlers can call app.locals.persistDb() ────
+  // This avoids route files importing database.js directly and makes it
+  // easy to swap the persist implementation in tests.
+  app.locals.persistDb = db ? persist : () => {};
+
   // ── Routes ────────────────────────────────────────────────────────────────
 
-  // Health check – no auth required; used by tests and uptime monitors.
+  // Health check — no auth required.
   app.get('/health', (_req, res) => {
     res.status(200).json({ status: 'ok', ts: new Date().toISOString() });
   });
+
+  // Auth routes — only mounted when a database is available.
+  if (db) {
+    app.use('/auth', createAuthRouter(db));
+  }
 
   // ── Error handlers ────────────────────────────────────────────────────────
 
@@ -32,7 +89,7 @@ function createApp() {
     res.status(404).json({ error: 'Not found' });
   });
 
-  // 500 – never leak internal detail to the client
+  // 500 — never leak internal detail to the client
   // eslint-disable-next-line no-unused-vars
   app.use((err, _req, res, _next) => {
     console.error('[error]', err.message);

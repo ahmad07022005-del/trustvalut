@@ -6,14 +6,15 @@
 </head>
 <body>
   <h1>Register</h1>
-  <% if (typeof error !== 'undefined' && error) { %>
+  <% if (error) { %>
     <p style="color:red;"><%= error %></p>
   <% } %>
   <form method="POST" action="/auth/register" autocomplete="off">
+    <input type="hidden" name="_csrf" value="<%= token %>" />
     <label>Email<br>
       <input type="email" name="email" required maxlength="254" />
     </label><br><br>
-    <label>Password<br>
+    <label>Password (12–128 characters)<br>
       <input type="password" name="password" required minlength="12" maxlength="128" />
     </label><br><br>
     <button type="submit">Create account</button>
