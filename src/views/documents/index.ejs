@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>My Documents – TrustVault</title>
+</head>
+<body>
+  <h1>My Documents</h1>
+  <p>Signed in as <strong><%= user.email %></strong> (<%= user.role %>)</p>
+
+  <a href="/documents/upload">Upload a document</a>
+
+  <% if (docs.length === 0) { %>
+    <p>You have no documents yet.</p>
+  <% } else { %>
+    <table>
+      <thead>
+        <tr>
+          <th>Title</th>
+          <th>Type</th>
+          <th>Size</th>
+          <th>Uploaded</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% docs.forEach(doc => { %>
+        <tr>
+          <td><%= doc.title %></td>
+          <td><%= doc.mimeType %></td>
+          <td><%= Math.ceil(doc.sizeBytes / 1024) %> KB</td>
+          <td><%= doc.createdAt %></td>
+          <td><a href="/documents/<%= doc.id %>/download">Download</a></td>
+        </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  <% } %>
+</body>
+</html>

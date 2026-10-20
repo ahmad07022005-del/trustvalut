@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Upload Document – TrustVault</title>
+</head>
+<body>
+  <h1>Upload Document</h1>
+  <% if (error) { %>
+    <p style="color:red;"><%= error %></p>
+  <% } %>
+  <form method="POST" action="/documents/upload"
+        enctype="multipart/form-data" autocomplete="off">
+    <input type="hidden" name="_csrf" value="<%= token %>" />
+
+    <label>Title<br>
+      <input type="text" name="title" required maxlength="200" />
+    </label><br><br>
+
+    <label>File (PDF, TXT, PNG, JPEG, DOCX — max 10 MB)<br>
+      <input type="file" name="file" required
+             accept=".pdf,.txt,.png,.jpg,.jpeg,.docx" />
+    </label><br><br>
+
+    <button type="submit">Upload</button>
+  </form>
+  <p><a href="/documents">Back to documents</a></p>
+</body>
+</html>
