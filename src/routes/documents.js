@@ -105,8 +105,24 @@ function createDocumentRouter(db, opts = {}) {
   }
 
   // ── GET /documents ───────────────────────────────────────────────────────
+  // Optional ?q= parameter searches document titles.
+  // Authorization rules (owner OR active grant) are enforced regardless of q.
   router.get('/', (req, res) => {
     const userId = req.session.user.id;
+
+    // Sanitize the search term: trim whitespace, cap length to avoid
+    // absurdly long LIKE patterns. Empty string means "no filter".
+    const rawQ  = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+    const query = rawQ.length > 0 ? rawQ.slice(0, 200) : '';
+
+    // Build the SQL conditionally. When no search term is given the query
+    // is identical to the original list query.
+    const searchClause = query ? 'AND d.title LIKE ?' : '';
+    // Wrap the term in % wildcards for a contains-search.
+    // The binding is parameterized — the user-supplied value never touches SQL text.
+    const params = query
+      ? [userId, userId, `%${query}%`]
+      : [userId, userId];
 
     const result = db.exec(
       `SELECT d.id, d.title, d.mime_type, d.size_bytes, d.created_at
@@ -121,8 +137,9 @@ function createDocumentRouter(db, opts = {}) {
                AND p.revoked_at  IS NULL
            )
          )
+         ${searchClause}
        ORDER BY d.created_at DESC`,
-      [userId, userId]
+      params
     );
 
     const docs = result.length > 0
@@ -131,7 +148,7 @@ function createDocumentRouter(db, opts = {}) {
         }))
       : [];
 
-    res.render('documents/index', { docs, user: req.session.user });
+    res.render('documents/index', { docs, user: req.session.user, query });
   });
 
   // ── GET /documents/upload ────────────────────────────────────────────────

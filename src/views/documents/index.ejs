@@ -10,8 +10,23 @@
 
   <a href="/documents/upload">Upload a document</a>
 
+  <form method="GET" action="/documents" style="margin-top:1em">
+    <label>Search by title
+      <input type="search" name="q" value="<%= query %>"
+             maxlength="200" placeholder="e.g. Annual Report" />
+    </label>
+    <button type="submit">Search</button>
+    <% if (query) { %>
+      <a href="/documents">Clear</a>
+    <% } %>
+  </form>
+
+  <% if (query) { %>
+    <p>Results for: <strong><%= query %></strong> (<%= docs.length %> found)</p>
+  <% } %>
+
   <% if (docs.length === 0) { %>
-    <p>You have no documents yet.</p>
+    <p><%= query ? 'No documents matched your search.' : 'You have no documents yet.' %></p>
   <% } else { %>
     <table>
       <thead>

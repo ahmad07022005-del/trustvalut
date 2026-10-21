@@ -347,3 +347,88 @@ test('non-integer document ID returns 400', async () => {
     .set('Cookie', cookie);
   assert.equal(res.status, 400);
 });
+
+// ── 5. Search ─────────────────────────────────────────────────────────────────
+
+test('GET /documents?q= returns matching documents for the owner', async () => {
+  const cookie = await loginAs(request, 'searcher@example.com');
+
+  // Upload two documents with distinct titles.
+  await uploadFile(request, cookie, {
+    fileContent: Buffer.from('%PDF-1.4 a'), mimeType: 'application/pdf',
+    filename: 'a.pdf', title: 'Annual Budget Report',
+  });
+  await uploadFile(request, cookie, {
+    fileContent: Buffer.from('%PDF-1.4 b'), mimeType: 'application/pdf',
+    filename: 'b.pdf', title: 'Quarterly Summary',
+  });
+
+  const res = await request
+    .get('/documents?q=Annual')
+    .set('Cookie', cookie);
+
+  assert.equal(res.status, 200);
+  assert.ok(res.text.includes('Annual Budget Report'),
+    'matching document should appear in results');
+  assert.ok(!res.text.includes('Quarterly Summary'),
+    'non-matching document must not appear in results');
+});
+
+test('GET /documents?q= with no matching title returns empty result', async () => {
+  const cookie = await loginAs(request, 'nomatch@example.com');
+
+  await uploadFile(request, cookie, {
+    fileContent: Buffer.from('%PDF-1.4 x'), mimeType: 'application/pdf',
+    filename: 'x.pdf', title: 'Only Document',
+  });
+
+  const res = await request
+    .get('/documents?q=doesnotexist')
+    .set('Cookie', cookie);
+
+  assert.equal(res.status, 200);
+  assert.ok(!res.text.includes('Only Document'),
+    'non-matching document must not appear');
+  assert.ok(res.text.includes('No documents matched'),
+    'empty-state message should indicate no matches');
+});
+
+test('GET /documents with empty q returns all accessible documents', async () => {
+  const cookie = await loginAs(request, 'emptyq@example.com');
+
+  await uploadFile(request, cookie, {
+    fileContent: Buffer.from('%PDF-1.4 z'), mimeType: 'application/pdf',
+    filename: 'z.pdf', title: 'Visible Doc',
+  });
+
+  // Empty q — should behave identically to /documents with no query param.
+  const res = await request
+    .get('/documents?q=')
+    .set('Cookie', cookie);
+
+  assert.equal(res.status, 200);
+  assert.ok(res.text.includes('Visible Doc'),
+    'all accessible documents should appear when q is empty');
+});
+
+test('GET /documents?q= does not return documents owned by another user', async () => {
+  // User A uploads a document with a distinctive title.
+  const cookieA = await loginAs(request, 'searchowner@example.com');
+  await uploadFile(request, cookieA, {
+    fileContent: Buffer.from('%PDF-1.4 secret'), mimeType: 'application/pdf',
+    filename: 'secret.pdf', title: 'TopSecretReport',
+  });
+
+  // User B searches for that exact title — must get no document rows.
+  const cookieB = await loginAs(request, 'searchother@example.com');
+  const res = await request
+    .get('/documents?q=TopSecretReport')
+    .set('Cookie', cookieB);
+
+  assert.equal(res.status, 200);
+  // The search term is echoed back into the page as a UX feature ("Results for: ...").
+  // The security assertion is that no *document row* (table cell) for that title
+  // appears — i.e. the document was not returned from the database for this user.
+  assert.ok(!res.text.includes('<td>TopSecretReport</td>'),
+    'search must not leak document rows owned by another user');
+});
