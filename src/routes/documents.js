@@ -16,6 +16,9 @@
  *    unauthorized requesters).
  *  - All DB queries use parameterised statements.
  *  - persist() is called after every write.
+ *  - Audit events are written for every significant outcome (success / denied /
+ *    error). An audit write failure surfaces as a console.error but never
+ *    blocks the operation response.
  */
 
 const express = require('express');
@@ -24,35 +27,29 @@ const path    = require('path');
 const fs      = require('fs');
 const crypto  = require('crypto');
 
-const { csrfToken } = require('../middleware/csrf');
+const { csrfToken }       = require('../middleware/csrf');
+const { writeAuditEvent } = require('../lib/audit');
 
 // ── Allowed file types ─────────────────────────────────────────────────────
-// Checked by MIME type (from multer) AND magic bytes (first 8 bytes of file).
 const ALLOWED_TYPES = {
-  'application/pdf':                                { ext: '.pdf',  magic: [0x25, 0x50, 0x44, 0x46] },           // %PDF
-  'text/plain':                                     { ext: '.txt',  magic: null },                                // no universal magic
-  'image/png':                                      { ext: '.png',  magic: [0x89, 0x50, 0x4E, 0x47] },           // \x89PNG
-  'image/jpeg':                                     { ext: '.jpg',  magic: [0xFF, 0xD8, 0xFF] },                  // JPEG SOI
+  'application/pdf': { ext: '.pdf', magic: [0x25, 0x50, 0x44, 0x46] },
+  'text/plain':      { ext: '.txt', magic: null },
+  'image/png':       { ext: '.png', magic: [0x89, 0x50, 0x4E, 0x47] },
+  'image/jpeg':      { ext: '.jpg', magic: [0xFF, 0xD8, 0xFF] },
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
-                                                    { ext: '.docx', magic: [0x50, 0x4B, 0x03, 0x04] },           // PK zip header
+                     { ext: '.docx', magic: [0x50, 0x4B, 0x03, 0x04] },
 };
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 const MAX_TITLE_LEN = 200;
 
-// ── Multer storage ─────────────────────────────────────────────────────────
-// destination and uploadsDir are set at router-creation time so tests can
-// override the uploads directory without touching the real ./uploads/ folder.
-
 function createStorage(uploadsDir) {
   return multer.diskStorage({
     destination(_req, _file, cb) {
-      // Ensure the directory exists before multer tries to write.
       fs.mkdirSync(uploadsDir, { recursive: true });
       cb(null, uploadsDir);
     },
     filename(_req, _file, cb) {
-      // UUID — no extension, no original name on disk.
       cb(null, crypto.randomUUID());
     },
   });
@@ -74,29 +71,21 @@ function createUploader(uploadsDir) {
   });
 }
 
-// ── Magic-byte validation ─────────────────────────────────────────────────
-// Read the first bytes of the stored file and compare to known signatures.
-// Returns true if the magic bytes match (or if the type has no magic bytes).
 function validateMagicBytes(filePath, mimeType) {
   const spec = ALLOWED_TYPES[mimeType];
-  if (!spec || !spec.magic) return true; // text/plain has no universal magic
-
-  const buf    = Buffer.alloc(spec.magic.length);
-  const fd     = fs.openSync(filePath, 'r');
+  if (!spec || !spec.magic) return true;
+  const buf       = Buffer.alloc(spec.magic.length);
+  const fd        = fs.openSync(filePath, 'r');
   const bytesRead = fs.readSync(fd, buf, 0, spec.magic.length, 0);
   fs.closeSync(fd);
-
   if (bytesRead < spec.magic.length) return false;
   return spec.magic.every((byte, i) => buf[i] === byte);
 }
 
-// ── Router factory ────────────────────────────────────────────────────────
-
 /**
  * @param {import('sql.js').Database} db
  * @param {object} [opts]
- * @param {string} [opts.uploadsDir] Override uploads directory (used in tests)
- * @returns {import('express').Router}
+ * @param {string} [opts.uploadsDir]
  */
 function createDocumentRouter(db, opts = {}) {
   const uploadsDir = opts.uploadsDir
@@ -106,8 +95,16 @@ function createDocumentRouter(db, opts = {}) {
   const upload = createUploader(uploadsDir);
   const router = express.Router();
 
+  // Helper: shorthand for writing an audit event using app.locals.persistDb
+  function audit(req, event) {
+    return writeAuditEvent(db, req.app.locals.persistDb, {
+      actorId:   req.session && req.session.user ? req.session.user.id : null,
+      ipAddress: req.ip,
+      ...event,
+    });
+  }
+
   // ── GET /documents ───────────────────────────────────────────────────────
-  // List documents the current user owns or has an active permission grant for.
   router.get('/', (req, res) => {
     const userId = req.session.user.id;
 
@@ -148,10 +145,8 @@ function createDocumentRouter(db, opts = {}) {
   });
 
   // ── POST /documents/upload ───────────────────────────────────────────────
-  // NOTE: verifyCsrf is NOT applied as Express middleware here because for
-  // multipart/form-data requests, req.body is empty until multer runs its
-  // parser. We call verifyCsrf manually inside the multer callback, after
-  // multer has populated req.body with the _csrf field.
+  // CSRF is verified manually after multer, because req.body is empty until
+  // multer parses the multipart form.
   router.post('/upload', (req, res, next) => {
     const uploader = upload.single('file');
 
@@ -159,14 +154,22 @@ function createDocumentRouter(db, opts = {}) {
       // ── multer errors ────────────────────────────────────────────────────
       if (err) {
         if (err.code === 'LIMIT_FILE_SIZE') {
+          audit(req, {
+            action: 'document.upload', resource: null,
+            outcome: 'error', detail: { reason: 'file_too_large' },
+          });
           return res.status(413).render('documents/upload', {
-            error: `File exceeds the 10 MB size limit.`,
+            error: 'File exceeds the 10 MB size limit.',
             token: csrfToken(req),
             user: req.session.user,
             allowedTypes: Object.keys(ALLOWED_TYPES).join(', '),
           });
         }
         if (err.code === 'DISALLOWED_TYPE') {
+          audit(req, {
+            action: 'document.upload', resource: null,
+            outcome: 'error', detail: { reason: 'disallowed_mime_type' },
+          });
           return res.status(400).render('documents/upload', {
             error: 'File type not allowed. Permitted: PDF, TXT, PNG, JPEG, DOCX.',
             token: csrfToken(req),
@@ -177,23 +180,23 @@ function createDocumentRouter(db, opts = {}) {
         return next(err);
       }
 
-      // ── CSRF check (after multer has parsed the multipart body) ──────────
-      // For multipart/form-data, req.body is only populated after multer runs,
-      // so CSRF must be verified here rather than as a pre-multer middleware.
+      // ── CSRF check ───────────────────────────────────────────────────────
       const submittedCsrf = req.body._csrf || req.headers['x-csrf-token'];
       const storedCsrf    = req.session && req.session.csrfToken;
       if (!submittedCsrf || !storedCsrf || submittedCsrf !== storedCsrf) {
-        // If a file was already written, delete it before rejecting.
         if (req.file && req.file.path) {
           try { fs.unlinkSync(req.file.path); } catch (_) {}
         }
         return res.status(403).json({ error: 'Invalid or missing CSRF token' });
       }
-      // Rotate the token after successful verification.
       req.session.csrfToken = crypto.randomBytes(32).toString('hex');
 
       // ── No file uploaded ─────────────────────────────────────────────────
       if (!req.file) {
+        audit(req, {
+          action: 'document.upload', resource: null,
+          outcome: 'error', detail: { reason: 'no_file' },
+        });
         return res.status(400).render('documents/upload', {
           error: 'Please select a file to upload.',
           token: csrfToken(req),
@@ -205,9 +208,12 @@ function createDocumentRouter(db, opts = {}) {
       const storedPath = req.file.path;
 
       // ── Magic-byte validation ─────────────────────────────────────────────
-      // Verify the file content matches its declared MIME type.
       if (!validateMagicBytes(storedPath, req.file.mimetype)) {
-        fs.unlinkSync(storedPath); // delete the suspicious file immediately
+        fs.unlinkSync(storedPath);
+        audit(req, {
+          action: 'document.upload', resource: null,
+          outcome: 'error', detail: { reason: 'magic_byte_mismatch' },
+        });
         return res.status(400).render('documents/upload', {
           error: 'File content does not match its declared type.',
           token: csrfToken(req),
@@ -220,6 +226,10 @@ function createDocumentRouter(db, opts = {}) {
       const title = (req.body.title || '').trim();
       if (!title || title.length > MAX_TITLE_LEN) {
         fs.unlinkSync(storedPath);
+        audit(req, {
+          action: 'document.upload', resource: null,
+          outcome: 'error', detail: { reason: 'invalid_title' },
+        });
         return res.status(400).render('documents/upload', {
           error: `Title is required and must be ${MAX_TITLE_LEN} characters or fewer.`,
           token: csrfToken(req),
@@ -229,6 +239,7 @@ function createDocumentRouter(db, opts = {}) {
       }
 
       // ── Insert document row ───────────────────────────────────────────────
+      let newDocId = null;
       try {
         db.run(
           `INSERT INTO documents (owner_id, title, storage_name, mime_type, size_bytes)
@@ -236,17 +247,30 @@ function createDocumentRouter(db, opts = {}) {
           [
             req.session.user.id,
             title,
-            req.file.filename,   // UUID — server-generated, not the original name
+            req.file.filename,
             req.file.mimetype,
             req.file.size,
           ]
         );
         req.app.locals.persistDb();
+
+        const idRow = db.exec('SELECT last_insert_rowid()');
+        newDocId    = idRow[0].values[0][0];
       } catch (dbErr) {
-        // Clean up the stored file if the DB insert fails.
         fs.unlinkSync(storedPath);
+        audit(req, {
+          action: 'document.upload', resource: null,
+          outcome: 'error', detail: { reason: 'db_insert_failed' },
+        });
         return next(dbErr);
       }
+
+      audit(req, {
+        action:   'document.upload',
+        resource: `document:${newDocId}`,
+        outcome:  'success',
+        detail:   { docId: newDocId, mimeType: req.file.mimetype },
+      });
 
       return res.redirect('/documents');
     });
@@ -254,7 +278,6 @@ function createDocumentRouter(db, opts = {}) {
 
   // ── GET /documents/:id/download ──────────────────────────────────────────
   router.get('/:id/download', (req, res) => {
-    // Validate that :id is a positive integer before touching the DB.
     const docId = parseInt(req.params.id, 10);
     if (!Number.isInteger(docId) || docId <= 0 || String(docId) !== req.params.id) {
       return res.status(400).json({ error: 'Invalid document ID' });
@@ -262,9 +285,6 @@ function createDocumentRouter(db, opts = {}) {
 
     const userId = req.session.user.id;
 
-    // Single query: fetch the document only if the requester is the owner
-    // OR has an active (non-revoked) permission grant.
-    // Never reveal whether a document exists to an unauthorized user.
     const result = db.exec(
       `SELECT d.storage_name, d.mime_type, d.title
        FROM documents d
@@ -283,8 +303,13 @@ function createDocumentRouter(db, opts = {}) {
     );
 
     if (result.length === 0 || result[0].values.length === 0) {
-      // Return 403 whether the document doesn't exist, belongs to someone else,
-      // or the user simply has no grant — the caller cannot distinguish these.
+      // Audit the denial without revealing document metadata to the requester.
+      audit(req, {
+        action:   'document.download',
+        resource: `document:${docId}`,
+        outcome:  'denied',
+        detail:   { reason: 'no_access' },
+      });
       return res.status(403).json({ error: 'Forbidden' });
     }
 
@@ -292,12 +317,23 @@ function createDocumentRouter(db, opts = {}) {
     const filePath = path.join(uploadsDir, storageName);
 
     if (!fs.existsSync(filePath)) {
-      // File is missing from disk — log but don't expose internals.
       console.error(`[download] file missing on disk: ${storageName}`);
+      audit(req, {
+        action:   'document.download',
+        resource: `document:${docId}`,
+        outcome:  'error',
+        detail:   { reason: 'file_missing_on_disk' },
+      });
       return res.status(500).json({ error: 'Internal server error' });
     }
 
-    // Serve the file with the original title as the suggested download name.
+    audit(req, {
+      action:   'document.download',
+      resource: `document:${docId}`,
+      outcome:  'success',
+      detail:   { docId },
+    });
+
     res.setHeader('Content-Disposition',
       `attachment; filename="${encodeURIComponent(title)}"`);
     res.setHeader('Content-Type', mimeType);

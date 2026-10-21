@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Manage Permissions – TrustVault</title>
+</head>
+<body>
+  <h1>Manage Permissions</h1>
+  <p>Document: <strong><%= doc.title %></strong></p>
+  <p>Signed in as <strong><%= user.email %></strong></p>
+
+  <% if (error) { %>
+    <p style="color:red;"><%= error %></p>
+  <% } %>
+  <% if (success) { %>
+    <p style="color:green;"><%= success %></p>
+  <% } %>
+
+  <h2>Grant access</h2>
+  <form method="POST" action="/documents/<%= doc.docId %>/permissions/grant" autocomplete="off">
+    <input type="hidden" name="_csrf" value="<%= token %>" />
+
+    <label>Grantee email address<br>
+      <input type="email" name="grantee_email" required maxlength="254" />
+    </label><br><br>
+
+    <label>Permission level<br>
+      <select name="permission">
+        <option value="read">read — view and download</option>
+        <option value="edit">edit — read and modify</option>
+      </select>
+    </label><br><br>
+
+    <button type="submit">Grant access</button>
+  </form>
+
+  <h2>Current grants</h2>
+  <% if (grants.length === 0) { %>
+    <p>No grants yet.</p>
+  <% } else { %>
+    <table>
+      <thead>
+        <tr>
+          <th>User</th>
+          <th>Permission</th>
+          <th>Granted at</th>
+          <th>Status</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% grants.forEach(g => { %>
+        <tr>
+          <td><%= g.email %></td>
+          <td><%= g.permission %></td>
+          <td><%= g.grantedAt %></td>
+          <td><%= g.active ? 'Active' : 'Revoked' %></td>
+          <td>
+            <% if (g.active) { %>
+            <form method="POST"
+                  action="/documents/<%= doc.docId %>/permissions/<%= g.grantId %>/revoke"
+                  style="display:inline">
+              <input type="hidden" name="_csrf" value="<%= token %>" />
+              <button type="submit">Revoke</button>
+            </form>
+            <% } %>
+          </td>
+        </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  <% } %>
+
+  <p><a href="/documents">Back to documents</a></p>
+</body>
+</html>

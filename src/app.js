@@ -6,10 +6,13 @@ const session        = require('express-session');
 const path           = require('path');
 const FileStore      = require('session-file-store')(session);
 
-const { createAuthRouter }     = require('./routes/auth');
-const { createDocumentRouter } = require('./routes/documents');
-const { persist }              = require('./db/database');
-const { requireAuth }          = require('./middleware/auth');
+const { createAuthRouter }        = require('./routes/auth');
+const { createDocumentRouter }    = require('./routes/documents');
+const { createPermissionsRouter } = require('./routes/permissions');
+const { createAdminRouter }       = require('./routes/admin');
+const { persist }                 = require('./db/database');
+const { requireAuth }             = require('./middleware/auth');
+const { requireRole }             = require('./middleware/auth');
 
 /**
  * Create and configure the Express application.
@@ -81,8 +84,10 @@ function createApp(db = null) {
 
   // Auth routes — only mounted when a database is available.
   if (db) {
-    app.use('/auth',      createAuthRouter(db));
-    app.use('/documents', requireAuth, createDocumentRouter(db));
+    app.use('/auth',                          createAuthRouter(db));
+    app.use('/documents',        requireAuth, createDocumentRouter(db));
+    app.use('/documents/:id/permissions', requireAuth, createPermissionsRouter(db));
+    app.use('/admin',            requireAuth, requireRole('admin'), createAdminRouter(db));
   }
 
   // ── Error handlers ────────────────────────────────────────────────────────

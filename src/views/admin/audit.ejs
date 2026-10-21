@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Audit Log – TrustVault Admin</title>
+</head>
+<body>
+  <h1>Audit Log</h1>
+  <p>Signed in as <strong><%= user.email %></strong> (admin) &nbsp;|&nbsp;
+     Total events: <%= total %></p>
+
+  <form method="GET" action="/admin/audit">
+    <label>Action
+      <select name="action">
+        <option value="">— all —</option>
+        <% allowedActions.forEach(a => { %>
+          <option value="<%= a %>"<%= filterAction === a ? ' selected' : '' %>><%= a %></option>
+        <% }) %>
+      </select>
+    </label>
+    &nbsp;
+    <label>Outcome
+      <select name="outcome">
+        <option value="">— all —</option>
+        <% allowedOutcomes.forEach(o => { %>
+          <option value="<%= o %>"<%= filterOutcome === o ? ' selected' : '' %>><%= o %></option>
+        <% }) %>
+      </select>
+    </label>
+    &nbsp;
+    <label>Actor ID <input type="text" name="actor" value="<%= filterActor %>" size="6" /></label>
+    &nbsp;
+    <button type="submit">Filter</button>
+    <a href="/admin/audit">Clear</a>
+  </form>
+
+  <% if (events.length === 0) { %>
+    <p>No audit events match the current filter.</p>
+  <% } else { %>
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Actor</th>
+          <th>Action</th>
+          <th>Resource</th>
+          <th>Outcome</th>
+          <th>Detail</th>
+          <th>Occurred at</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% events.forEach(e => { %>
+        <tr>
+          <td><%= e.id %></td>
+          <td><%= e.email || (e.actorId ? String(e.actorId) : 'anonymous') %></td>
+          <td><%= e.action %></td>
+          <td><%= e.resource || '' %></td>
+          <td><%= e.outcome %></td>
+          <td><%= e.detail || '' %></td>
+          <td><%= e.occurredAt %></td>
+        </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  <% } %>
+
+  <p>
+    Page <%= page %> of <%= totalPages %>
+    <% if (page > 1) { %>
+      &nbsp; <a href="?page=<%= page - 1 %>&action=<%= filterAction %>&outcome=<%= filterOutcome %>&actor=<%= filterActor %>">← Prev</a>
+    <% } %>
+    <% if (page < totalPages) { %>
+      &nbsp; <a href="?page=<%= page + 1 %>&action=<%= filterAction %>&outcome=<%= filterOutcome %>&actor=<%= filterActor %>">Next →</a>
+    <% } %>
+  </p>
+
+  <p><a href="/documents">Back to documents</a></p>
+</body>
+</html>
