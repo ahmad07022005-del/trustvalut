@@ -17,6 +17,7 @@
 const express  = require('express');
 const bcrypt   = require('bcryptjs');
 const { csrfToken, verifyCsrf } = require('../middleware/csrf');
+const { writeAuditEvent }       = require('../lib/audit');
 
 const BCRYPT_ROUNDS = 12;
 
@@ -40,6 +41,15 @@ function isValidPassword(value) {
  */
 function createAuthRouter(db) {
   const router = express.Router();
+
+  // Shorthand audit writer for auth events.
+  // actorId is always passed explicitly; never derived from req.body.
+  function audit(req, event) {
+    return writeAuditEvent(db, req.app.locals.persistDb, {
+      ipAddress: req.ip,
+      ...event,
+    });
+  }
 
   // ── GET /auth/register ─────────────────────────────────────────────────────
   router.get('/register', (req, res) => {
@@ -100,6 +110,13 @@ function createAuthRouter(db) {
     const { email, password } = req.body;
 
     if (!isValidEmail(email) || !isValidPassword(password)) {
+      audit(req, {
+        actorId:  null,
+        action:   'auth.login',
+        resource: null,
+        outcome:  'denied',
+        detail:   { reason: 'invalid_input' },
+      });
       return res.status(400).render('login', {
         error: 'Invalid email or password.',
         token: csrfToken(req),
@@ -122,6 +139,15 @@ function createAuthRouter(db) {
     const match = await bcrypt.compare(password, hashToCheck);
 
     if (!row || !match) {
+      // actorId is null — do not confirm whether the email is registered.
+      // detail contains only an opaque reason code; never the submitted email.
+      audit(req, {
+        actorId:  null,
+        action:   'auth.login',
+        resource: null,
+        outcome:  'denied',
+        detail:   { reason: 'bad_credentials' },
+      });
       return res.status(401).render('login', {
         error: 'Invalid email or password.',
         token: csrfToken(req),
@@ -131,6 +157,13 @@ function createAuthRouter(db) {
     const [id, userEmail, , role, is_active] = row;
 
     if (!is_active) {
+      audit(req, {
+        actorId:  id,
+        action:   'auth.login',
+        resource: `user:${id}`,
+        outcome:  'denied',
+        detail:   { reason: 'account_deactivated' },
+      });
       return res.status(403).render('login', {
         error: 'This account has been deactivated.',
         token: csrfToken(req),
@@ -151,17 +184,41 @@ function createAuthRouter(db) {
       // Role comes from the database row, never from client input.
       req.session.user = { id, email: userEmail, role };
 
+      // Audit the successful login after the session is established.
+      audit(req, {
+        actorId:  id,
+        action:   'auth.login',
+        resource: `user:${id}`,
+        outcome:  'success',
+        detail:   { role },
+      });
+
       res.redirect('/');
     });
   });
 
   // ── POST /auth/logout ──────────────────────────────────────────────────────
   router.post('/logout', verifyCsrf, (req, res) => {
+    // Capture the user id NOW, before session.destroy() wipes req.session.
+    const actorId = req.session && req.session.user ? req.session.user.id : null;
+
     req.session.destroy((err) => {
       if (err) {
         console.error('[logout] session destroy error:', err.message);
       }
       res.clearCookie('sid');
+
+      // Audit after destroy so the session is gone before we write;
+      // audit failure must never re-authenticate the user.
+      // persistDb is still accessible via req.app.locals even after destroy.
+      audit(req, {
+        actorId,
+        action:   'auth.logout',
+        resource: actorId ? `user:${actorId}` : null,
+        outcome:  'success',
+        detail:   null,
+      });
+
       res.redirect('/auth/login');
     });
   });
