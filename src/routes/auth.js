@@ -18,6 +18,7 @@ const express  = require('express');
 const bcrypt   = require('bcryptjs');
 const { csrfToken, verifyCsrf } = require('../middleware/csrf');
 const { writeAuditEvent }       = require('../lib/audit');
+const { loginLimiter, registerLimiter } = require('../middleware/rateLimiter');
 
 const BCRYPT_ROUNDS = 12;
 
@@ -57,7 +58,7 @@ function createAuthRouter(db) {
   });
 
   // ── POST /auth/register ────────────────────────────────────────────────────
-  router.post('/register', verifyCsrf, async (req, res) => {
+  router.post('/register', registerLimiter, verifyCsrf, async (req, res) => {
     const { email, password } = req.body;
 
     if (!isValidEmail(email)) {
@@ -106,7 +107,7 @@ function createAuthRouter(db) {
   });
 
   // ── POST /auth/login ───────────────────────────────────────────────────────
-  router.post('/login', verifyCsrf, async (req, res) => {
+  router.post('/login', loginLimiter, verifyCsrf, async (req, res) => {
     const { email, password } = req.body;
 
     if (!isValidEmail(email) || !isValidPassword(password)) {

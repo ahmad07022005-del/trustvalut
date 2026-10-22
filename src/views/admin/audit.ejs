@@ -7,7 +7,8 @@
 <body>
   <h1>Audit Log</h1>
   <p>Signed in as <strong><%= user.email %></strong> (admin) &nbsp;|&nbsp;
-     Total events: <%= total %></p>
+     Total events: <%= total %> &nbsp;|&nbsp;
+     <a href="/admin/users">Manage users</a></p>
 
   <form method="GET" action="/admin/audit">
     <label>Action
@@ -29,6 +30,10 @@
     </label>
     &nbsp;
     <label>Actor ID <input type="text" name="actor" value="<%= filterActor %>" size="6" /></label>
+    &nbsp;
+    <label>From <input type="date" name="from" value="<%= filterFrom %>" /></label>
+    &nbsp;
+    <label>To <input type="date" name="to" value="<%= filterTo %>" /></label>
     &nbsp;
     <button type="submit">Filter</button>
     <a href="/admin/audit">Clear</a>
@@ -68,10 +73,10 @@
   <p>
     Page <%= page %> of <%= totalPages %>
     <% if (page > 1) { %>
-      &nbsp; <a href="?page=<%= page - 1 %>&action=<%= filterAction %>&outcome=<%= filterOutcome %>&actor=<%= filterActor %>">← Prev</a>
+      &nbsp; <a href="?page=<%= page - 1 %>&action=<%= filterAction %>&outcome=<%= filterOutcome %>&actor=<%= filterActor %>&from=<%= filterFrom %>&to=<%= filterTo %>">← Prev</a>
     <% } %>
     <% if (page < totalPages) { %>
-      &nbsp; <a href="?page=<%= page + 1 %>&action=<%= filterAction %>&outcome=<%= filterOutcome %>&actor=<%= filterActor %>">Next →</a>
+      &nbsp; <a href="?page=<%= page + 1 %>&action=<%= filterAction %>&outcome=<%= filterOutcome %>&actor=<%= filterActor %>&from=<%= filterFrom %>&to=<%= filterTo %>">Next →</a>
     <% } %>
   </p>
 

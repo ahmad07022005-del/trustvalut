@@ -509,3 +509,116 @@ test('no exposed application route can DELETE or UPDATE audit_events', async () 
     );
   }
 });
+
+// ── 16. Admin activation/deactivation audit events ───────────────────────────
+
+/**
+ * Helper: register + login a user, return their session cookie.
+ * Used inline so each test is fully self-contained.
+ */
+async function registerAndLoginLocal(req, email, password = 'SecurePass1234!') {
+  const regGet  = await req.get('/auth/register');
+  await req
+    .post('/auth/register')
+    .set('Cookie', extractCookies(regGet))
+    .send(`email=${encodeURIComponent(email)}&password=${encodeURIComponent(password)}&_csrf=${extractCsrf(regGet.text)}`);
+  const loginGet  = await req.get('/auth/login');
+  const loginPost = await req
+    .post('/auth/login')
+    .set('Cookie', extractCookies(loginGet))
+    .send(`email=${encodeURIComponent(email)}&password=${encodeURIComponent(password)}&_csrf=${extractCsrf(loginGet.text)}`);
+  return extractCookies(loginPost);
+}
+
+/**
+ * Helper: get an admin cookie by registering, promoting in DB, then re-logging in.
+ */
+async function getAdminCookie(req, email) {
+  await registerAndLoginLocal(req, email);
+  makeAdmin(email);
+  // Re-login to get a session that carries the admin role.
+  const loginGet  = await req.get('/auth/login');
+  const loginPost = await req
+    .post('/auth/login')
+    .set('Cookie', extractCookies(loginGet))
+    .send(`email=${encodeURIComponent(email)}&password=SecurePass1234!&_csrf=${extractCsrf(loginGet.text)}`);
+  return extractCookies(loginPost);
+}
+
+test('admin deactivation creates admin.deactivate/success audit event with correct actor and target', async () => {
+  const adminCookie  = await getAdminCookie(request, 'auditdeact@example.com');
+  await registerAndLoginLocal(request, 'auditdeacttarget@example.com');
+
+  // Look up IDs
+  const adminRow  = db.exec("SELECT id FROM users WHERE email = 'auditdeact@example.com'");
+  const targetRow = db.exec("SELECT id FROM users WHERE email = 'auditdeacttarget@example.com'");
+  const adminId   = adminRow[0].values[0][0];
+  const targetId  = targetRow[0].values[0][0];
+
+  // Get a CSRF token from the users page (admin-accessible).
+  const usersPage = await request.get('/admin/users').set('Cookie', adminCookie);
+  assert.equal(usersPage.status, 200, 'admin must reach /admin/users');
+  const csrf  = extractCsrf(usersPage.text);
+  const fresh = extractCookies(usersPage) || adminCookie;
+
+  const res = await request
+    .post(`/admin/users/${targetId}/deactivate`)
+    .set('Cookie', fresh)
+    .send(`_csrf=${csrf}`);
+  assert.equal(res.status, 302, `expected redirect after deactivation, got ${res.status}`);
+
+  // Verify the audit event.
+  const result = db.exec(
+    "SELECT actor_id, resource, outcome, detail FROM audit_events WHERE action = 'admin.deactivate' ORDER BY id DESC LIMIT 1"
+  );
+  assert.ok(result.length > 0 && result[0].values.length > 0, 'admin.deactivate audit event not found');
+  const [actorId, resource, outcome, detail] = result[0].values[0];
+  assert.equal(actorId, adminId, 'actorId must be the admin who performed the action');
+  assert.equal(resource, `user:${targetId}`, 'resource must identify the target user');
+  assert.equal(outcome, 'success');
+  const parsed = JSON.parse(detail);
+  assert.equal(parsed.targetId, targetId, 'detail.targetId must match the deactivated user');
+});
+
+test('admin activation creates admin.activate/success audit event with correct actor and target', async () => {
+  const adminCookie = await getAdminCookie(request, 'auditact@example.com');
+  await registerAndLoginLocal(request, 'auditacttarget@example.com');
+
+  const adminRow  = db.exec("SELECT id FROM users WHERE email = 'auditact@example.com'");
+  const targetRow = db.exec("SELECT id FROM users WHERE email = 'auditacttarget@example.com'");
+  const adminId   = adminRow[0].values[0][0];
+  const targetId  = targetRow[0].values[0][0];
+
+  // First deactivate the target (consume CSRF token from page).
+  const usersPage1 = await request.get('/admin/users').set('Cookie', adminCookie);
+  const csrf1  = extractCsrf(usersPage1.text);
+  const fresh1 = extractCookies(usersPage1) || adminCookie;
+  await request
+    .post(`/admin/users/${targetId}/deactivate`)
+    .set('Cookie', fresh1)
+    .send(`_csrf=${csrf1}`);
+
+  // Now activate them — fetch a fresh CSRF token after the CSRF rotation.
+  const usersPage2 = await request.get('/admin/users').set('Cookie', adminCookie);
+  assert.equal(usersPage2.status, 200, 'admin must reach /admin/users for second visit');
+  const csrf2  = extractCsrf(usersPage2.text);
+  const fresh2 = extractCookies(usersPage2) || adminCookie;
+
+  const res = await request
+    .post(`/admin/users/${targetId}/activate`)
+    .set('Cookie', fresh2)
+    .send(`_csrf=${csrf2}`);
+  assert.equal(res.status, 302, `expected redirect after activation, got ${res.status}`);
+
+  // Verify the audit event.
+  const result = db.exec(
+    "SELECT actor_id, resource, outcome, detail FROM audit_events WHERE action = 'admin.activate' ORDER BY id DESC LIMIT 1"
+  );
+  assert.ok(result.length > 0 && result[0].values.length > 0, 'admin.activate audit event not found');
+  const [actorId, resource, outcome, detail] = result[0].values[0];
+  assert.equal(actorId, adminId, 'actorId must be the admin who performed the action');
+  assert.equal(resource, `user:${targetId}`, 'resource must identify the target user');
+  assert.equal(outcome, 'success');
+  const parsed = JSON.parse(detail);
+  assert.equal(parsed.targetId, targetId, 'detail.targetId must match the activated user');
+});

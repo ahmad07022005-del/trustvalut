@@ -29,6 +29,7 @@ const crypto  = require('crypto');
 
 const { csrfToken }       = require('../middleware/csrf');
 const { writeAuditEvent } = require('../lib/audit');
+const { uploadLimiter }   = require('../middleware/rateLimiter');
 
 // ── Allowed file types ─────────────────────────────────────────────────────
 const ALLOWED_TYPES = {
@@ -164,7 +165,8 @@ function createDocumentRouter(db, opts = {}) {
   // ── POST /documents/upload ───────────────────────────────────────────────
   // CSRF is verified manually after multer, because req.body is empty until
   // multer parses the multipart form.
-  router.post('/upload', (req, res, next) => {
+  // The upload rate limiter runs first (before multer) to cheaply reject floods.
+  router.post('/upload', uploadLimiter, (req, res, next) => {
     const uploader = upload.single('file');
 
     uploader(req, res, async (err) => {

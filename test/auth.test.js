@@ -24,7 +24,6 @@ process.env.SESSION_SECRET = 'test-secret-not-for-production';
 
 const { getDb, closeDb }   = require('../src/db/database');
 const { createApp }        = require('../src/app');
-
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /**
@@ -212,4 +211,261 @@ test('POST /auth/logout destroys the session and redirects', async () => {
     logoutRes.headers.location.includes('/auth/login'),
     'expected redirect to /auth/login after logout'
   );
+});
+
+// ── 5. Auth audit events ──────────────────────────────────────────────────────
+
+function getAuthAuditEvents(outcome) {
+  const result = db.exec(
+    "SELECT actor_id, resource, outcome, detail FROM audit_events WHERE action = 'auth.login' AND outcome = ? ORDER BY id DESC",
+    [outcome]
+  );
+  if (result.length === 0 || result[0].values.length === 0) return [];
+  return result[0].values.map(([actorId, resource, oc, detail]) =>
+    ({ actorId, resource, outcome: oc, detail: detail ? JSON.parse(detail) : null })
+  );
+}
+
+test('successful login writes auth.login/success audit event', async () => {
+  const reg = await request.get('/auth/register');
+  await request
+    .post('/auth/register')
+    .set('Cookie', extractCookies(reg))
+    .send(`email=auditlogin@example.com&password=SecurePass1234!&_csrf=${extractCsrf(reg.text)}`);
+
+  const loginGet = await request.get('/auth/login');
+  await request
+    .post('/auth/login')
+    .set('Cookie', extractCookies(loginGet))
+    .send(`email=auditlogin@example.com&password=SecurePass1234!&_csrf=${extractCsrf(loginGet.text)}`);
+
+  const events = getAuthAuditEvents('success');
+  assert.ok(events.length >= 1, 'expected at least one auth.login/success event');
+  assert.ok(events[0].actorId !== null, 'actorId must be set on successful login');
+  assert.ok(events[0].resource.startsWith('user:'), 'resource must be user:<id>');
+  // Must not contain password, email, or session identifiers.
+  const raw = JSON.stringify(events[0]);
+  assert.ok(!/password|session|cookie|secret/i.test(raw),
+    'audit event must not contain sensitive fields');
+});
+
+test('failed login (wrong password) writes auth.login/denied event with actorId null', async () => {
+  const reg = await request.get('/auth/register');
+  await request
+    .post('/auth/register')
+    .set('Cookie', extractCookies(reg))
+    .send(`email=auditfail@example.com&password=SecurePass1234!&_csrf=${extractCsrf(reg.text)}`);
+
+  const loginGet = await request.get('/auth/login');
+  await request
+    .post('/auth/login')
+    .set('Cookie', extractCookies(loginGet))
+    .send(`email=auditfail@example.com&password=WrongPassword999!&_csrf=${extractCsrf(loginGet.text)}`);
+
+  const events = getAuthAuditEvents('denied');
+  assert.ok(events.length >= 1, 'expected at least one auth.login/denied event');
+  // actorId must be null — must not reveal whether the email exists.
+  assert.equal(events[0].actorId, null,
+    'actorId must be null on failed login to prevent user enumeration');
+  assert.equal(events[0].detail.reason, 'bad_credentials');
+  // Must not contain the submitted email.
+  const raw = JSON.stringify(events[0]);
+  assert.ok(!/auditfail@example\.com/i.test(raw),
+    'failed login audit event must not contain the submitted email');
+});
+
+test('failed login (non-existent user) also writes denied event with actorId null', async () => {
+  const loginGet = await request.get('/auth/login');
+  await request
+    .post('/auth/login')
+    .set('Cookie', extractCookies(loginGet))
+    .send(`email=ghost99@example.com&password=SecurePass1234!&_csrf=${extractCsrf(loginGet.text)}`);
+
+  const events = getAuthAuditEvents('denied');
+  assert.ok(events.length >= 1, 'expected denied audit event for non-existent user');
+  assert.equal(events[0].actorId, null, 'actorId must be null for non-existent user');
+});
+
+test('logout writes auth.logout/success audit event', async () => {
+  const reg = await request.get('/auth/register');
+  await request
+    .post('/auth/register')
+    .set('Cookie', extractCookies(reg))
+    .send(`email=auditlogout@example.com&password=SecurePass1234!&_csrf=${extractCsrf(reg.text)}`);
+
+  const loginGet  = await request.get('/auth/login');
+  const loginRes  = await request
+    .post('/auth/login')
+    .set('Cookie', extractCookies(loginGet))
+    .send(`email=auditlogout@example.com&password=SecurePass1234!&_csrf=${extractCsrf(loginGet.text)}`);
+  const sessionCookie = extractCookies(loginRes);
+
+  const loginGet2     = await request.get('/auth/login').set('Cookie', sessionCookie);
+  const csrfForLogout = extractCsrf(loginGet2.text);
+  await request
+    .post('/auth/logout')
+    .set('Cookie', sessionCookie)
+    .send(`_csrf=${csrfForLogout}`);
+
+  const result = db.exec(
+    "SELECT actor_id, outcome FROM audit_events WHERE action = 'auth.logout' ORDER BY id DESC LIMIT 1"
+  );
+  assert.ok(result.length > 0 && result[0].values.length > 0, 'expected auth.logout audit event');
+  const [actorId, outcome] = result[0].values[0];
+  assert.equal(outcome, 'success');
+  assert.ok(actorId !== null, 'actorId must be set on logout');
+});
+
+// ── 6. Account deactivation bypass ────────────────────────────────────────────
+
+test('a deactivated account is blocked on the next request even with a valid session', async () => {
+  // Register and log in.
+  const reg = await request.get('/auth/register');
+  await request
+    .post('/auth/register')
+    .set('Cookie', extractCookies(reg))
+    .send(`email=deactivate@example.com&password=SecurePass1234!&_csrf=${extractCsrf(reg.text)}`);
+
+  const loginGet = await request.get('/auth/login');
+  const loginRes = await request
+    .post('/auth/login')
+    .set('Cookie', extractCookies(loginGet))
+    .send(`email=deactivate@example.com&password=SecurePass1234!&_csrf=${extractCsrf(loginGet.text)}`);
+  assert.equal(loginRes.status, 302, 'login should succeed');
+  const sessionCookie = extractCookies(loginRes);
+
+  // Confirm the session works before deactivation.
+  const before = await request.get('/documents').set('Cookie', sessionCookie);
+  assert.ok(before.status !== 401 && before.status !== 302,
+    `expected access before deactivation, got ${before.status}`);
+
+  // Deactivate the account directly in the DB.
+  db.run("UPDATE users SET is_active = 0 WHERE email = 'deactivate@example.com'");
+
+  // The existing session must now be rejected.
+  const after = await request.get('/documents').set('Cookie', sessionCookie);
+  assert.ok(
+    after.status === 302 || after.status === 401,
+    `expected 302 or 401 after deactivation, got ${after.status}`
+  );
+});
+
+// ── 7. Admin user management ───────────────────────────────────────────────────
+
+async function registerAndLogin(req, email, password = 'SecurePass1234!') {
+  const reg = await req.get('/auth/register');
+  await req
+    .post('/auth/register')
+    .set('Cookie', extractCookies(reg))
+    .send(`email=${encodeURIComponent(email)}&password=${encodeURIComponent(password)}&_csrf=${extractCsrf(reg.text)}`);
+  const loginGet  = await req.get('/auth/login');
+  const loginRes  = await req
+    .post('/auth/login')
+    .set('Cookie', extractCookies(loginGet))
+    .send(`email=${encodeURIComponent(email)}&password=${encodeURIComponent(password)}&_csrf=${extractCsrf(loginGet.text)}`);
+  return extractCookies(loginRes);
+}
+
+test('non-admin cannot deactivate a user account', async () => {
+  // Register two viewers; one tries to deactivate the other.
+  const cookieA = await registerAndLogin(request, 'viewerA@example.com');
+  await registerAndLogin(request, 'viewerB@example.com');
+
+  const userBRow = db.exec("SELECT id FROM users WHERE email = 'viewerB@example.com'");
+  const userBId  = userBRow[0].values[0][0];
+
+  // Get a CSRF token for viewerA via the login page (any CSRF-bearing page works).
+  const loginPage = await request.get('/auth/login').set('Cookie', cookieA);
+  const csrf      = extractCsrf(loginPage.text);
+  const fresh     = extractCookies(loginPage) || cookieA;
+
+  const res = await request
+    .post(`/admin/users/${userBId}/deactivate`)
+    .set('Cookie', fresh)
+    .send(`_csrf=${csrf}`);
+
+  // Non-admin must be rejected before the handler runs.
+  assert.equal(res.status, 403, `expected 403 for non-admin, got ${res.status}`);
+
+  // UserB must still be active.
+  const check = db.exec("SELECT is_active FROM users WHERE email = 'viewerB@example.com'");
+  assert.equal(check[0].values[0][0], 1, 'viewerB must still be active');
+});
+
+test('admin cannot self-deactivate', async () => {
+  const adminCookie = await registerAndLogin(request, 'selfdeact@example.com');
+  db.run("UPDATE users SET role = 'admin' WHERE email = 'selfdeact@example.com'");
+
+  // Register a second user so the /admin/users page renders at least one row
+  // with a CSRF-bearing form.  Without another user the page only shows the
+  // admin's own "(you)" row, which has no _csrf field by design.
+  await registerAndLogin(request, 'otherusr@example.com');
+
+  // Re-login so the session reflects admin role.
+  const loginGet  = await request.get('/auth/login');
+  const loginRes  = await request
+    .post('/auth/login')
+    .set('Cookie', extractCookies(loginGet))
+    .send(`email=selfdeact%40example.com&password=SecurePass1234!&_csrf=${extractCsrf(loginGet.text)}`);
+  const cookie = extractCookies(loginRes);
+
+  const adminRow = db.exec("SELECT id FROM users WHERE email = 'selfdeact@example.com'");
+  const adminId  = adminRow[0].values[0][0];
+
+  // Get CSRF from the users page — the other user's row provides the token.
+  const usersPage = await request.get('/admin/users').set('Cookie', cookie);
+  assert.equal(usersPage.status, 200, 'admin should reach /admin/users');
+  const csrf  = extractCsrf(usersPage.text);
+  const fresh = extractCookies(usersPage) || cookie;
+
+  const res = await request
+    .post(`/admin/users/${adminId}/deactivate`)
+    .set('Cookie', fresh)
+    .send(`_csrf=${csrf}`);
+
+  assert.equal(res.status, 400, `expected 400 for self-deactivation, got ${res.status}`);
+
+  // Admin must still be active.
+  const check = db.exec("SELECT is_active FROM users WHERE email = 'selfdeact@example.com'");
+  assert.equal(check[0].values[0][0], 1, 'admin must still be active after self-deactivation attempt');
+});
+
+// ── 8. requireActiveAccount database-error handling ───────────────────────────
+
+test('requireActiveAccount fails closed when the database throws an error', async () => {
+  // Register and log in so we have a valid authenticated session.
+  const reg = await request.get('/auth/register');
+  await request
+    .post('/auth/register')
+    .set('Cookie', extractCookies(reg))
+    .send(`email=dberror@example.com&password=SecurePass1234!&_csrf=${extractCsrf(reg.text)}`);
+
+  const loginGet = await request.get('/auth/login');
+  const loginRes = await request
+    .post('/auth/login')
+    .set('Cookie', extractCookies(loginGet))
+    .send(`email=dberror@example.com&password=SecurePass1234!&_csrf=${extractCsrf(loginGet.text)}`);
+  assert.equal(loginRes.status, 302, 'login should succeed');
+  const sessionCookie = extractCookies(loginRes);
+
+  // Verify the session works before the DB is closed.
+  const before = await request.get('/documents').set('Cookie', sessionCookie);
+  assert.ok(
+    before.status !== 401 && before.status !== 302,
+    `expected access before DB close, got ${before.status}`
+  );
+
+  // Close the database. The next call to db.exec() inside requireActiveAccount
+  // will throw "Database closed". The middleware must fail closed (not pass through).
+  closeDb();
+
+  // The request must be rejected — redirect or 401, never the actual route response.
+  const after = await request.get('/documents').set('Cookie', sessionCookie);
+  assert.ok(
+    after.status === 302 || after.status === 401,
+    `expected 302 or 401 when DB is closed (fail closed), got ${after.status}`
+  );
+
+  // Reopen the DB so afterEach and subsequent tests can clean up normally.
+  db = await getDb();
 });
