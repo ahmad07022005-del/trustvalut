@@ -56,6 +56,16 @@ function createApp(db = null) {
     throw new Error('SESSION_SECRET must be at least 32 characters in production');
   }
 
+  const explicitSecureCookie = process.env.SESSION_COOKIE_SECURE;
+  const secureCookie = explicitSecureCookie === 'true'
+    ? true
+    : explicitSecureCookie === 'false'
+      ? false
+      : process.env.NODE_ENV === 'production';
+  if (process.env.NODE_ENV === 'production' && secureCookie === false) {
+    console.warn('[warn] SESSION_COOKIE_SECURE=false disables HTTPS-only session cookies; use only for local HTTP testing.');
+  }
+
   const sessionConfig = {
     name: 'sid',
     secret: sessionSecret || 'local-development-only-secret-change-me',
@@ -63,7 +73,7 @@ function createApp(db = null) {
     saveUninitialized: false,
     cookie: {
       httpOnly: true,                             // not accessible via JS
-      secure: process.env.NODE_ENV === 'production', // HTTPS only in prod
+      secure: secureCookie,                         // HTTPS-only by default in prod
       sameSite: 'lax',                            // CSRF mitigation layer
       maxAge: 2 * 60 * 60 * 1000,                // 2 hours
     },

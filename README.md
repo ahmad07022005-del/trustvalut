@@ -6,7 +6,7 @@ TrustVault is a security-focused document management platform. Confidential docu
 
 ## Project status
 
-**Implemented and test-verified** (107 automated tests passing):
+**Implemented and test-verified** (109 automated tests passing):
 
 - Role-based authentication (admin, viewer); bcrypt password hashing
 - Private document uploads (PDF, TXT, PNG, JPEG, DOCX; max 10 MB; magic-byte validation)
@@ -90,6 +90,7 @@ Then visit `http://localhost:3000/admin/audit` to access the audit dashboard.
 |---|---|---|---|
 | `PORT` | No | `3000` | HTTP port |
 | `NODE_ENV` | No | `development` | Set to `production` for secure cookies |
+| `SESSION_COOKIE_SECURE` | No | Automatic | Overrides the cookie `secure` flag. Use `false` only for isolated local HTTP testing; keep it enabled in production. |
 | `SESSION_SECRET` | **Yes** | — | Long random string for session signing |
 | `DB_PATH` | No | `./data/trustvault.db` | SQLite database file path |
 | `TRUST_PROXY` | No | unset | Set to `loopback` only when a trusted local reverse proxy terminates TLS |
@@ -120,6 +121,9 @@ Never commit `.env`. Use `.env.example` as a template.
 | GET | `/documents/shared` | Yes | List active documents shared with the current user |
 | GET | `/documents/:id/download` | Yes | Download (owner or grantee) |
 | GET | `/documents/:id/preview` | Yes | Preview supported PDF/image documents (owner or grantee) |
+| GET | `/documents/:id/edit` | Yes (owner or editor) | Edit metadata form |
+| POST | `/documents/:id/edit` | Yes (owner or editor) | Save metadata changes |
+| POST | `/documents/:id/delete` | Yes (owner only) | Start secure deletion and revoke grants |
 | GET | `/documents/:id/permissions` | Yes (owner) | Manage permissions |
 | POST | `/documents/:id/permissions/grant` | Yes (owner) | Grant read/edit access |
 | POST | `/documents/:id/permissions/:permId/revoke` | Yes (owner) | Revoke access |
@@ -127,6 +131,8 @@ Never commit `.env`. Use `.env.example` as a template.
 | GET | `/admin/users` | Admin | User management |
 | POST | `/admin/users/:id/deactivate` | Admin | Deactivate account |
 | POST | `/admin/users/:id/activate` | Admin | Re-activate account |
+| GET | `/admin/categories` | Admin | List document categories |
+| POST | `/admin/categories/:id/delete` | Admin | Delete a category and clear document assignments |
 
 ## Running tests
 
@@ -150,6 +156,11 @@ For production:
 4. Store `SESSION_SECRET` and `DB_PATH` in your platform's secret manager, not in `.env` files on disk.
 5. Back up `DB_PATH` regularly. The SQLite file contains all user data and audit records.
 6. Restrict filesystem access to `./uploads/` and `./data/` to the process user only.
+
+For local testing over plain `http://localhost`, keep `NODE_ENV=development`, or
+set `SESSION_COOKIE_SECURE=false` explicitly. If production mode is used over
+plain HTTP with secure cookies enabled, browsers correctly refuse to send the
+session cookie and login/CSRF requests cannot persist a session.
 
 ## Security principles
 

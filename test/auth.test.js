@@ -130,6 +130,7 @@ test('POST /auth/login succeeds with correct credentials and sets session', asyn
 
   // Now log in.
   const loginGet = await request.get('/auth/login');
+  const preAuthCookie = extractCookies(loginGet);
   const loginRes = await request
     .post('/auth/login')
     .set('Cookie', extractCookies(loginGet))
@@ -137,6 +138,42 @@ test('POST /auth/login succeeds with correct credentials and sets session', asyn
 
   assert.equal(loginRes.status, 302, 'expected redirect after login');
   assert.ok(loginRes.headers['set-cookie'], 'expected session cookie to be set');
+  assert.notEqual(extractCookies(loginRes), preAuthCookie, 'login must regenerate the session identifier');
+});
+
+test('deactivated accounts cannot log in with otherwise valid credentials', async () => {
+  const reg = await request.get('/auth/register');
+  await request
+    .post('/auth/register')
+    .set('Cookie', extractCookies(reg))
+    .send(`email=inactive-login@example.com&password=SecurePass1234!&_csrf=${extractCsrf(reg.text)}`);
+  db.run("UPDATE users SET is_active = 0 WHERE email = 'inactive-login@example.com'");
+
+  const loginGet = await request.get('/auth/login');
+  const loginRes = await request
+    .post('/auth/login')
+    .set('Cookie', extractCookies(loginGet))
+    .send(`email=inactive-login@example.com&password=SecurePass1234!&_csrf=${extractCsrf(loginGet.text)}`);
+
+  assert.equal(loginRes.status, 403);
+  assert.match(loginRes.text, /deactivated/i);
+});
+
+test('explicit SESSION_COOKIE_SECURE override controls cookie transport', async () => {
+  const previous = process.env.SESSION_COOKIE_SECURE;
+  try {
+    process.env.SESSION_COOKIE_SECURE = 'true';
+    const secureRes = await supertest(createApp(db)).get('/auth/login');
+    assert.equal(secureRes.headers['set-cookie'], undefined, 'secure cookies must not be emitted over plain HTTP');
+
+    process.env.SESSION_COOKIE_SECURE = 'false';
+    const localRes = await supertest(createApp(db)).get('/auth/login');
+    assert.ok(localRes.headers['set-cookie'], 'local HTTP mode must emit a session cookie');
+    assert.doesNotMatch(localRes.headers['set-cookie'].join('; '), /; Secure/i);
+  } finally {
+    if (previous === undefined) delete process.env.SESSION_COOKIE_SECURE;
+    else process.env.SESSION_COOKIE_SECURE = previous;
+  }
 });
 
 test('POST /auth/login fails with wrong password and returns 401', async () => {
@@ -210,6 +247,12 @@ test('POST /auth/logout destroys the session and redirects', async () => {
   assert.ok(
     logoutRes.headers.location.includes('/auth/login'),
     'expected redirect to /auth/login after logout'
+  );
+
+  const protectedAfterLogout = await request.get('/documents').set('Cookie', sessionCookie);
+  assert.ok(
+    protectedAfterLogout.status === 302 || protectedAfterLogout.status === 401,
+    `expected protected access to fail after logout, got ${protectedAfterLogout.status}`
   );
 });
 
