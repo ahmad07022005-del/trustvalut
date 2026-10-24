@@ -37,6 +37,7 @@ function createApp(db = null) {
   // ── Body parsing (limit size to reduce DoS risk) ──────────────────────────
   app.use(express.json({ limit: '32kb' }));
   app.use(express.urlencoded({ extended: false, limit: '32kb' }));
+  app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 
   // ── View engine (EJS) ─────────────────────────────────────────────────────
   app.set('view engine', 'ejs');

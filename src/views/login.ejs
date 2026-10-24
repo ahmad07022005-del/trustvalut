@@ -1,24 +1,32 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Sign in – TrustVault</title>
+  <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <h1>Sign in</h1>
-  <% if (error) { %>
-    <p style="color:red;"><%= error %></p>
-  <% } %>
-  <form method="POST" action="/auth/login" autocomplete="off">
-    <input type="hidden" name="_csrf" value="<%= token %>" />
-    <label>Email<br>
-      <input type="email" name="email" required maxlength="254" />
-    </label><br><br>
-    <label>Password<br>
-      <input type="password" name="password" required maxlength="128" />
-    </label><br><br>
-    <button type="submit">Sign in</button>
-  </form>
-  <p><a href="/auth/register">No account? Register</a></p>
+  <main class="auth-shell">
+    <section class="auth-card" aria-labelledby="signin-title">
+      <div class="auth-brand"><a class="brand" href="/"><span class="brand-mark" aria-hidden="true">T</span><span>TrustVault</span></a></div>
+      <h1 id="signin-title">Welcome back</h1>
+      <p class="auth-intro">Sign in to securely manage and share your documents.</p>
+      <% if (error) { %><p class="error" role="alert"><%= error %></p><% } %>
+      <form method="POST" action="/auth/login" autocomplete="on" class="form-stack">
+        <input type="hidden" name="_csrf" value="<%= token %>" />
+        <div class="field">
+          <label for="email">Email address</label>
+          <input id="email" type="email" name="email" required maxlength="254" autocomplete="email" />
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <input id="password" type="password" name="password" required minlength="12" maxlength="128" autocomplete="current-password" />
+        </div>
+        <button type="submit">Sign in</button>
+      </form>
+      <p class="form-footer">Don’t have an account? <a href="/auth/register">Create one</a></p>
+    </section>
+  </main>
 </body>
 </html>

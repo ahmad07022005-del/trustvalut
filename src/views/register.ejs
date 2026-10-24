@@ -1,24 +1,33 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Register – TrustVault</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Create account – TrustVault</title>
+  <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <h1>Register</h1>
-  <% if (error) { %>
-    <p style="color:red;"><%= error %></p>
-  <% } %>
-  <form method="POST" action="/auth/register" autocomplete="off">
-    <input type="hidden" name="_csrf" value="<%= token %>" />
-    <label>Email<br>
-      <input type="email" name="email" required maxlength="254" />
-    </label><br><br>
-    <label>Password (12–128 characters)<br>
-      <input type="password" name="password" required minlength="12" maxlength="128" />
-    </label><br><br>
-    <button type="submit">Create account</button>
-  </form>
-  <p><a href="/auth/login">Already have an account? Sign in</a></p>
+  <main class="auth-shell">
+    <section class="auth-card" aria-labelledby="register-title">
+      <div class="auth-brand"><a class="brand" href="/"><span class="brand-mark" aria-hidden="true">T</span><span>TrustVault</span></a></div>
+      <h1 id="register-title">Create your account</h1>
+      <p class="auth-intro">Keep your documents organized, private, and easy to share.</p>
+      <% if (error) { %><p class="error" role="alert"><%= error %></p><% } %>
+      <form method="POST" action="/auth/register" autocomplete="on" class="form-stack">
+        <input type="hidden" name="_csrf" value="<%= token %>" />
+        <div class="field">
+          <label for="email">Email address</label>
+          <input id="email" type="email" name="email" required maxlength="254" autocomplete="email" />
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <input id="password" type="password" name="password" required minlength="12" maxlength="128" autocomplete="new-password" />
+          <span class="form-help">Use 12–128 characters.</span>
+        </div>
+        <button type="submit">Create account</button>
+      </form>
+      <p class="form-footer">Already have an account? <a href="/auth/login">Sign in</a></p>
+    </section>
+  </main>
 </body>
 </html>

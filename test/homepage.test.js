@@ -2,10 +2,7 @@
 
 const { test, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
-const express = require('express');
-const session = require('express-session');
 const supertest = require('supertest');
-const path = require('node:path');
 
 process.env.NODE_ENV = 'test';
 process.env.DB_PATH = ':memory:';
@@ -39,7 +36,10 @@ test('GET / redirects logged-out visitors to /auth/login', async () => {
   assert.equal(response.status, 302);
   assert.equal(response.headers.location, '/auth/login');
   assert.equal((await request.get('/health')).status, 200);
-  assert.equal((await request.get('/auth/login')).status, 200);
+  const loginPage = await request.get('/auth/login');
+  assert.equal(loginPage.status, 200);
+  assert.match(loginPage.text, /href="\/styles\.css"/);
+  assert.match(loginPage.text, /Welcome back/);
 });
 
 test('GET / redirects logged-in users to /documents', async () => {
@@ -58,5 +58,18 @@ test('GET / redirects logged-in users to /documents', async () => {
   const home = await request.get('/').set('Cookie', cookieHeader(login));
   assert.equal(home.status, 302);
   assert.equal(home.headers.location, '/documents');
-  assert.equal((await request.get('/documents').set('Cookie', cookieHeader(login))).status, 200);
+  const dashboard = await request.get('/documents').set('Cookie', cookieHeader(login));
+  assert.equal(dashboard.status, 200);
+  assert.match(dashboard.text, /My documents/);
+  assert.match(dashboard.text, /href="\/styles\.css"/);
+});
+
+test('invalid credentials render a useful error page instead of a blank response', async () => {
+  const page = await request.get('/auth/login');
+  const response = await request.post('/auth/login')
+    .set('Cookie', cookieHeader(page))
+    .send(`email=missing@example.com&password=WrongPassword123!&_csrf=${encodeURIComponent(csrfToken(page.text))}`);
+  assert.equal(response.status, 401);
+  assert.match(response.text, /Invalid email or password/);
+  assert.match(response.text, /href="\/styles\.css"/);
 });
