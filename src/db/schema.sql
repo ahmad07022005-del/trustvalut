@@ -42,6 +42,9 @@ CREATE TABLE IF NOT EXISTS documents (
                        CHECK (is_deleted IN (0, 1)),
   deleted_at   TEXT,
   deletion_error TEXT,
+  deletion_state TEXT NOT NULL DEFAULT 'active'
+                 CHECK (deletion_state IN ('active', 'pending', 'deleted')),
+  deletion_attempts INTEGER NOT NULL DEFAULT 0,
   created_at   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   updated_at   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
@@ -76,6 +79,8 @@ CREATE TABLE IF NOT EXISTS audit_events (
   outcome     TEXT    NOT NULL CHECK (outcome IN ('success', 'denied', 'error')),
   detail      TEXT,   -- JSON blob for extra context
   ip_address  TEXT,
+  prev_hash   TEXT,
+  integrity_version INTEGER NOT NULL DEFAULT 1,
   -- sha256 of (id || actor_id || action || outcome || prev_hash) for tamper detection
   row_hash    TEXT,
   occurred_at TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))

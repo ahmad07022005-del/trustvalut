@@ -163,6 +163,8 @@ For production:
 - Rate limiting uses an in-memory store (per process). Counters reset on restart and do not sync across multiple processes. For multi-server deployments, configure a shared Redis store.
 - No production-grade virus scanning of uploaded files.
 - Uploaded text and Office files are validated structurally only; no antivirus scanning is provided.
+- Document deletion first persists a `pending` state and revokes access; startup reconciliation retries physical cleanup after crashes or filesystem errors.
+- Audit integrity version 2 covers detail, IP address, timestamp, and previous-hash linkage. The database-local chain does not protect against a privileged attacker who can rewrite the database and recompute hashes.
 - The `owner` role in the schema is defined but not assigned by any current route.
 - No HTTPS termination is included; deploy behind a reverse proxy (nginx, Caddy) in production.
 

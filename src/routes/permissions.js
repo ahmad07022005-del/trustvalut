@@ -172,19 +172,26 @@ function createPermissionsRouter(db) {
         `That user already has an active "${permission}" grant for this document.`, null);
     }
 
-    db.run(
-      `INSERT INTO document_permissions (document_id, user_id, permission, granted_by)
-       VALUES (?, ?, ?, ?)`,
-      [doc.docId, granteeId, permission, req.session.user.id]
-    );
-    req.app.locals.persistDb();
-
-    audit(req, {
-      action:   'permission.grant',
-      resource: `document:${doc.docId}`,
-      outcome:  'success',
-      detail:   { docId: doc.docId, granteeId, permission },
-    });
+    db.run('BEGIN');
+    try {
+      db.run(
+        `INSERT INTO document_permissions (document_id, user_id, permission, granted_by)
+         VALUES (?, ?, ?, ?)`,
+        [doc.docId, granteeId, permission, req.session.user.id]
+      );
+      const auditOk = writeAuditEvent(db, () => {}, {
+        actorId: req.session.user.id, ipAddress: req.ip,
+        action: 'permission.grant', resource: `document:${doc.docId}`,
+        outcome: 'success', detail: { docId: doc.docId, granteeId, permission },
+      });
+      if (!auditOk) throw new Error('mandatory audit write failed');
+      db.run('COMMIT');
+      req.app.locals.persistDb();
+    } catch (err) {
+      try { db.run('ROLLBACK'); } catch (_) {}
+      audit(req, { action:'permission.grant', resource:`document:${doc.docId}`, outcome:'error', detail:{ reason:'transaction_failed' } });
+      return res.status(500).json({ error: 'Permission change could not be recorded' });
+    }
 
     return renderPermissionsPage(req, res, db, doc,
       null, `Granted "${permission}" access to ${normalizedEmail}.`);
@@ -213,20 +220,26 @@ function createPermissionsRouter(db) {
 
     const revokedUserId = permResult[0].values[0][1];
 
-    db.run(
-      `UPDATE document_permissions
-       SET revoked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-       WHERE id = ?`,
-      [permId]
-    );
-    req.app.locals.persistDb();
-
-    audit(req, {
-      action:   'permission.revoke',
-      resource: `document:${doc.docId}`,
-      outcome:  'success',
-      detail:   { docId: doc.docId, revokedUserId, permId },
-    });
+    db.run('BEGIN');
+    try {
+      db.run(
+        `UPDATE document_permissions
+         SET revoked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+         WHERE id = ?`, [permId]
+      );
+      const auditOk = writeAuditEvent(db, () => {}, {
+        actorId: req.session.user.id, ipAddress: req.ip,
+        action:'permission.revoke', resource:`document:${doc.docId}`,
+        outcome:'success', detail:{ docId:doc.docId, revokedUserId, permId },
+      });
+      if (!auditOk) throw new Error('mandatory audit write failed');
+      db.run('COMMIT');
+      req.app.locals.persistDb();
+    } catch (err) {
+      try { db.run('ROLLBACK'); } catch (_) {}
+      audit(req, { action:'permission.revoke', resource:`document:${doc.docId}`, outcome:'error', detail:{ reason:'transaction_failed' } });
+      return res.status(500).json({ error: 'Permission change could not be recorded' });
+    }
 
     return renderPermissionsPage(req, res, db, doc,
       null, 'Permission revoked successfully.');

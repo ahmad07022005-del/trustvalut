@@ -23,6 +23,9 @@ Threat inventory with implementation and verification status.
 | Concurrent revocation | `revoked_at IS NULL` checked at the database level on each download; no in-memory caching | **PARTIAL** | Logic verified by code inspection and revocation test; no concurrent-request race test |
 | Brute-force login and automated account creation | `express-rate-limit` applied to `POST /auth/login` (10 req / 15 min) and `POST /auth/register` (5 req / 1 hr) per IP; returns 429 with `Retry-After` header | **VERIFIED** | `test/ratelimit.test.js` — limit enforced, 429 returned, headers present, counter resets |
 | Upload flooding | `express-rate-limit` applied to `POST /documents/upload` (20 req / 1 hr) per IP | **VERIFIED** | `test/ratelimit.test.js` — same limiter behaviour verified |
+| Crash during document deletion | Persisted pending state, immediate access revocation, startup filesystem reconciliation | **PARTIAL** | `src/lib/deletion.js`, `test/security-features.test.js`; process-crash integration coverage remains limited |
+| Audit field tampering | Version-2 hash covers detail, IP, timestamp, and previous-hash linkage; legacy rows remain versioned for compatibility | **VERIFIED** | `test/security-features.test.js` protected-field tampering test |
+| Permission/audit inconsistency | Grant/revoke mutations and mandatory success audit writes share a database transaction | **PARTIAL** | `src/routes/permissions.js`; concurrent database-level integration coverage remains limited |
 
 ## Known limitations
 
@@ -32,6 +35,7 @@ Threat inventory with implementation and verification status.
 - The `owner` role is defined in the schema but not assigned by any current route; all registrations receive the `viewer` role. Admin promotion requires direct database access.
 - No HTTPS is included in the application. Deploy behind a TLS-terminating reverse proxy in production.
 - Uploaded files are not virus-scanned.
+- Preview isolation is not a separate origin; only PDF and image MIME types are served inline, with `nosniff` and authorization checks. A separate origin is recommended for higher-assurance deployments.
 - `text/plain` files have no magic-byte signature; content validation for `.txt` uploads relies solely on the declared MIME type.
 
 ## Review process

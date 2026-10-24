@@ -4,6 +4,9 @@ require('dotenv').config();
 
 const { createApp } = require('./app');
 const { getDb }     = require('./db/database');
+const { persist }    = require('./db/database');
+const { reconcilePendingDeletions } = require('./lib/deletion');
+const path = require('path');
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
@@ -14,6 +17,7 @@ async function main() {
   }
   // Initialise database (async because sql.js loads a WASM module).
   const db = await getDb();
+  reconcilePendingDeletions(db, path.resolve('./uploads'), persist);
 
   // Pass db to createApp so auth routes can use it.
   const app = createApp(db);

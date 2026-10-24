@@ -158,12 +158,17 @@ function createDocumentRouter(db, opts = {}) {
   router.post('/:id/delete', (req,res) => {
     const id = parseId(req.params.id); if (!id) return res.status(400).json({error:'Invalid document ID'});
     if (!tokenOk(req)) return res.status(403).json({error:'Invalid or missing CSRF token'});
-    const row=db.exec('SELECT storage_name,owner_id FROM documents WHERE id=? AND is_deleted=0',[id]);
+    const row=db.exec("SELECT storage_name,owner_id FROM documents WHERE id=? AND is_deleted=0 AND deletion_state='active'",[id]);
     if (!row.length || !row[0].values.length || row[0].values[0][1] !== req.session.user.id) return res.status(403).json({error:'Forbidden'});
     const filePath=containedPath(uploadsDir,row[0].values[0][0]);
-    try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch (err) { db.run('UPDATE documents SET deletion_error=? WHERE id=?',[String(err.message).slice(0,200),id]); req.app.locals.persistDb(); audit(req,{action:'document.delete',resource:`document:${id}`,outcome:'error',detail:{reason:'file_delete_failed'}}); return res.status(500).json({error:'Document could not be securely deleted'}); }
-    db.run("UPDATE documents SET is_deleted=1,deleted_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),deletion_error=NULL WHERE id=?",[id]);
-    db.run("UPDATE document_permissions SET revoked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE document_id=? AND revoked_at IS NULL",[id]); req.app.locals.persistDb();
+    // Persist the pending state and revoke grants before touching the file.
+    // A crash after this point leaves an inaccessible row for startup recovery.
+    db.run("UPDATE documents SET deletion_state='pending', is_deleted=1, deleted_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'), deletion_error=NULL WHERE id=?",[id]);
+    db.run("UPDATE document_permissions SET revoked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE document_id=? AND revoked_at IS NULL",[id]);
+    req.app.locals.persistDb();
+    try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); }
+    catch (err) { db.run('UPDATE documents SET deletion_attempts=deletion_attempts+1,deletion_error=? WHERE id=?',[String(err.message).slice(0,200),id]); req.app.locals.persistDb(); audit(req,{action:'document.delete',resource:`document:${id}`,outcome:'error',detail:{reason:'file_delete_failed'}}); return res.status(500).json({error:'Deletion is pending filesystem cleanup'}); }
+    db.run("UPDATE documents SET deletion_state='deleted',deletion_error=NULL WHERE id=?",[id]); req.app.locals.persistDb();
     audit(req,{action:'document.delete',resource:`document:${id}`,outcome:'success',detail:{docId:id}}); return res.redirect('/documents');
   });
 

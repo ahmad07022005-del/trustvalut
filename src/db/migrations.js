@@ -30,6 +30,14 @@ function applyMigrations(db) {
     db.run('CREATE INDEX IF NOT EXISTS idx_documents_created ON documents (created_at)');
     db.run('INSERT INTO schema_migrations (version) VALUES (1)');
   }
+
+  if (!applied.has(2)) {
+    if (!hasColumn(db, 'documents', 'deletion_state')) db.run("ALTER TABLE documents ADD COLUMN deletion_state TEXT NOT NULL DEFAULT 'active'");
+    if (!hasColumn(db, 'documents', 'deletion_attempts')) db.run('ALTER TABLE documents ADD COLUMN deletion_attempts INTEGER NOT NULL DEFAULT 0');
+    if (!hasColumn(db, 'audit_events', 'prev_hash')) db.run('ALTER TABLE audit_events ADD COLUMN prev_hash TEXT');
+    if (!hasColumn(db, 'audit_events', 'integrity_version')) db.run('ALTER TABLE audit_events ADD COLUMN integrity_version INTEGER NOT NULL DEFAULT 1');
+    db.run('INSERT INTO schema_migrations (version) VALUES (2)');
+  }
 }
 
 module.exports = { applyMigrations };
