@@ -162,12 +162,12 @@ function createPermissionsRouter(db) {
     }
 
     const existing = db.exec(
-      `SELECT id FROM document_permissions
-       WHERE document_id = ? AND user_id = ? AND permission = ? AND revoked_at IS NULL`,
-      [doc.docId, granteeId, permission]
+      `SELECT id, permission FROM document_permissions
+       WHERE document_id = ? AND user_id = ? AND revoked_at IS NULL`,
+      [doc.docId, granteeId]
     );
 
-    if (existing.length > 0 && existing[0].values.length > 0) {
+    if (existing.length > 0 && existing[0].values.some(row => row[1] === permission)) {
       return renderPermissionsPage(req, res, db, doc,
         `That user already has an active "${permission}" grant for this document.`, null);
     }
@@ -175,13 +175,18 @@ function createPermissionsRouter(db) {
     db.run('BEGIN');
     try {
       db.run(
+        `UPDATE document_permissions SET revoked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+         WHERE document_id = ? AND user_id = ? AND revoked_at IS NULL`,
+        [doc.docId, granteeId]
+      );
+      db.run(
         `INSERT INTO document_permissions (document_id, user_id, permission, granted_by)
          VALUES (?, ?, ?, ?)`,
         [doc.docId, granteeId, permission, req.session.user.id]
       );
       const auditOk = writeAuditEvent(db, () => {}, {
         actorId: req.session.user.id, ipAddress: req.ip,
-        action: 'permission.grant', resource: `document:${doc.docId}`,
+        action: existing.length && existing[0].values.length ? 'permission.update' : 'permission.grant', resource: `document:${doc.docId}`,
         outcome: 'success', detail: { docId: doc.docId, granteeId, permission },
       });
       if (!auditOk) throw new Error('mandatory audit write failed');

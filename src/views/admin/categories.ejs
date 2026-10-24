@@ -1,9 +1,5 @@
-<!DOCTYPE html>
-<html lang="en"><head>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="stylesheet" href="/styles.css" /><meta charset="UTF-8" /><title>Categories – TrustVault Admin</title></head><body>
-<h1>Categories</h1><p><a href="/admin/audit">Audit log</a> | <a href="/admin/users">Manage users</a></p>
-<% if (categories.length === 0) { %><p>No categories.</p><% } else { %>
-<table><tr><th>Name</th><th>Documents</th><th>Action</th></tr>
-<% categories.forEach(c => { %><tr><td><%= c.name %></td><td><%= c.documentCount %></td><td><form method="POST" action="/admin/categories/<%= c.id %>/delete"><input type="hidden" name="_csrf" value="<%= token %>" /><button type="submit">Delete</button></form></td></tr><% }) %>
-</table><% } %></body></html>
+<!doctype html>
+<html lang="en">
+<head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>Categories – TrustVault Admin</title><link rel="stylesheet" href="/styles.css" /></head>
+<body><header class="site-header"><div class="header-inner"><a class="brand" href="/"><span class="brand-mark" aria-hidden="true">T</span><span>TrustVault Admin</span></a><div class="header-actions"><a href="/documents">Documents</a><a href="/admin/users">Users</a><a href="/admin/audit">Audit log</a></div></div></header>
+<main class="page"><div class="page-heading"><div><h1>Categories</h1><p class="muted">Review categories used by active documents.</p></div></div><section class="card"><% if (categories.length === 0) { %><p class="empty-state">No categories.</p><% } else { %><div class="table-wrap"><table><thead><tr><th>Name</th><th>Documents</th><th>Action</th></tr></thead><tbody><% categories.forEach(c => { %><tr><td><%= c.name %></td><td><%= c.documentCount %></td><td><form method="POST" action="/admin/categories/<%= c.id %>/delete" class="inline-form"><input type="hidden" name="_csrf" value="<%= token %>" /><button type="submit" class="danger">Delete</button></form></td></tr><% }) %></tbody></table></div><% } %></section></main></body></html>

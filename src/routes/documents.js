@@ -21,6 +21,12 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const MAX_TITLE_LEN = 200;
 const MAX_DESCRIPTION_LEN = 2000;
 
+function isValidEmail(value) {
+  return typeof value === 'string'
+    && value.length <= 254
+    && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
 function createStorage(uploadsDir) {
   return multer.diskStorage({
     destination(_req, _file, cb) { fs.mkdirSync(uploadsDir, { recursive: true }); cb(null, uploadsDir); },
@@ -72,6 +78,20 @@ function createDocumentRouter(db, opts = {}) {
     return Boolean(ok);
   };
 
+  function renderUpload(req, res, status = 200, error = null, values = {}) {
+    return res.status(status).render('documents/upload', {
+      error,
+      token: csrfToken(req),
+      user: req.session.user,
+      allowedTypes: Object.keys(ALLOWED_TYPES).join(', '),
+      title: values.title || '',
+      description: values.description || '',
+      category: values.category || '',
+      shareEmail: values.shareEmail || '',
+      sharePermission: values.sharePermission || 'read',
+    });
+  }
+
   router.get('/', (req, res) => {
     const userId = req.session.user.id;
     const query = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 200) : '';
@@ -101,30 +121,89 @@ function createDocumentRouter(db, opts = {}) {
     res.render('documents/index', { docs, user: req.session.user, query, mime, category, from, to, minSize, maxSize, page, categories, token: csrfToken(req) });
   });
 
-  router.get('/upload', (req, res) => res.render('documents/upload', { error:null, token:csrfToken(req), user:req.session.user, allowedTypes:Object.keys(ALLOWED_TYPES).join(', ') }));
+  router.get('/upload', (req, res) => renderUpload(req, res));
 
   router.post('/upload', uploadLimiter, (req, res, next) => {
     upload.single('file')(req, res, async err => {
       if (err) {
-        if (err.code === 'LIMIT_FILE_SIZE') { audit(req,{action:'document.upload',resource:null,outcome:'error',detail:{reason:'file_too_large'}}); return res.status(413).render('documents/upload', { error:'File exceeds the 10 MB size limit.', token:csrfToken(req), user:req.session.user, allowedTypes:Object.keys(ALLOWED_TYPES).join(', ') }); }
-        if (err.code === 'DISALLOWED_TYPE') { audit(req,{action:'document.upload',resource:null,outcome:'error',detail:{reason:'disallowed_mime_type'}}); return res.status(400).render('documents/upload', { error:'File type and extension are not allowed or do not match.', token:csrfToken(req), user:req.session.user, allowedTypes:Object.keys(ALLOWED_TYPES).join(', ') }); }
+        if (err.code === 'LIMIT_FILE_SIZE') { audit(req,{action:'document.upload',resource:null,outcome:'error',detail:{reason:'file_too_large'}}); return renderUpload(req, res, 413, 'File exceeds the 10 MB size limit.'); }
+        if (err.code === 'DISALLOWED_TYPE') { audit(req,{action:'document.upload',resource:null,outcome:'error',detail:{reason:'disallowed_mime_type'}}); return renderUpload(req, res, 400, 'File type and extension are not allowed or do not match.'); }
         return next(err);
       }
       if (!tokenOk(req)) { if (req.file) try { fs.unlinkSync(req.file.path); } catch (_) {} return res.status(403).json({ error:'Invalid or missing CSRF token' }); }
-      if (!req.file) { audit(req,{action:'document.upload',resource:null,outcome:'error',detail:{reason:'no_file'}}); return res.status(400).render('documents/upload', { error:'Please select a file to upload.', token:csrfToken(req), user:req.session.user, allowedTypes:Object.keys(ALLOWED_TYPES).join(', ') }); }
+      const values = {
+        title: typeof req.body.title === 'string' ? req.body.title.trim() : '',
+        description: typeof req.body.description === 'string' ? req.body.description.trim() : '',
+        category: typeof req.body.category === 'string' ? req.body.category.trim().slice(0, 100) : '',
+        shareEmail: typeof req.body.share_email === 'string' ? req.body.share_email.trim().toLowerCase() : '',
+        sharePermission: typeof req.body.share_permission === 'string' ? req.body.share_permission : 'read',
+      };
+      if (!req.file) { audit(req,{action:'document.upload',resource:null,outcome:'error',detail:{reason:'no_file'}}); return renderUpload(req, res, 400, 'Please select a file to upload.', values); }
       const storedPath = containedPath(uploadsDir, req.file.filename);
-      if (!validateMagicBytes(storedPath, req.file.mimetype)) { fs.unlinkSync(storedPath); audit(req,{action:'document.upload',resource:null,outcome:'error',detail:{reason:'magic_byte_mismatch'}}); return res.status(400).render('documents/upload', { error:'File content does not match its declared type.', token:csrfToken(req), user:req.session.user, allowedTypes:Object.keys(ALLOWED_TYPES).join(', ') }); }
-      const title = typeof req.body.title === 'string' ? req.body.title.trim() : '';
-      const description = typeof req.body.description === 'string' ? req.body.description.trim() : '';
-      if (!title || title.length > MAX_TITLE_LEN || description.length > MAX_DESCRIPTION_LEN) { fs.unlinkSync(storedPath); audit(req,{action:'document.upload',resource:null,outcome:'error',detail:{reason:'invalid_title_or_description'}}); return res.status(400).render('documents/upload', { error:'Title or description is invalid.', token:csrfToken(req), user:req.session.user, allowedTypes:Object.keys(ALLOWED_TYPES).join(', ') }); }
+      if (!validateMagicBytes(storedPath, req.file.mimetype)) { fs.unlinkSync(storedPath); audit(req,{action:'document.upload',resource:null,outcome:'error',detail:{reason:'magic_byte_mismatch'}}); return renderUpload(req, res, 400, 'File content does not match its declared type.', values); }
+      if (!values.title || values.title.length > MAX_TITLE_LEN || values.description.length > MAX_DESCRIPTION_LEN) { fs.unlinkSync(storedPath); audit(req,{action:'document.upload',resource:null,outcome:'error',detail:{reason:'invalid_title_or_description'}}); return renderUpload(req, res, 400, 'Title or description is invalid.', values); }
+
+      let recipientId = null;
+      if (values.shareEmail) {
+        if (!isValidEmail(values.shareEmail) || !['read', 'edit'].includes(values.sharePermission)) {
+          fs.unlinkSync(storedPath);
+          audit(req, { action:'document.upload', resource:null, outcome:'denied', detail:{reason:'invalid_share_request'} });
+          return renderUpload(req, res, 400, 'Enter a valid registered recipient email and choose Read or Edit.', values);
+        }
+        const recipient = db.exec('SELECT id FROM users WHERE email = ? AND is_active = 1', [values.shareEmail]);
+        if (!recipient.length || !recipient[0].values.length) {
+          fs.unlinkSync(storedPath);
+          audit(req, { action:'document.upload', resource:null, outcome:'denied', detail:{reason:'recipient_not_registered'} });
+          return renderUpload(req, res, 400, 'No active registered user was found for that email. Ask the recipient to register first.', values);
+        }
+        recipientId = recipient[0].values[0][0];
+        if (recipientId === req.session.user.id) {
+          fs.unlinkSync(storedPath);
+          return renderUpload(req, res, 400, 'You cannot share a document with yourself.', values);
+        }
+      }
       try {
-        db.run('INSERT INTO documents (owner_id,title,description,storage_name,mime_type,size_bytes) VALUES (?,?,?,?,?,?)', [req.session.user.id,title,description,req.file.filename,req.file.mimetype,req.file.size]);
-        req.app.locals.persistDb();
+        db.run('BEGIN');
+        let categoryId = null;
+        if (values.category) {
+          db.run('INSERT OR IGNORE INTO categories (name, created_by) VALUES (?, ?)', [values.category, req.session.user.id]);
+          categoryId = db.exec('SELECT id FROM categories WHERE name = ?', [values.category])[0].values[0][0];
+        }
+        db.run('INSERT INTO documents (owner_id,title,description,category_id,storage_name,mime_type,size_bytes) VALUES (?,?,?,?,?,?,?)', [req.session.user.id, values.title, values.description, categoryId, req.file.filename, req.file.mimetype, req.file.size]);
         const id = db.exec('SELECT last_insert_rowid()')[0].values[0][0];
-        audit(req, { action:'document.upload', resource:`document:${id}`, outcome:'success', detail:{ docId:id, mimeType:req.file.mimetype } });
+        if (recipientId) {
+          db.run('INSERT INTO document_permissions (document_id, user_id, permission, granted_by) VALUES (?, ?, ?, ?)', [id, recipientId, values.sharePermission, req.session.user.id]);
+        }
+        const uploadAuditOk = writeAuditEvent(db, () => {}, { actorId:req.session.user.id, ipAddress:req.ip, action:'document.upload', resource:`document:${id}`, outcome:'success', detail:{ docId:id, mimeType:req.file.mimetype } });
+        if (!uploadAuditOk) throw new Error('mandatory upload audit write failed');
+        if (recipientId) {
+          const shareAuditOk = writeAuditEvent(db, () => {}, { actorId:req.session.user.id, ipAddress:req.ip, action:'permission.grant', resource:`document:${id}`, outcome:'success', detail:{ docId:id, granteeId:recipientId, permission:values.sharePermission } });
+          if (!shareAuditOk) throw new Error('mandatory share audit write failed');
+        }
+        db.run('COMMIT');
+        req.app.locals.persistDb();
         return res.redirect('/documents');
-      } catch (dbErr) { try { fs.unlinkSync(storedPath); } catch (_) {} return next(dbErr); }
+      } catch (dbErr) {
+        try { db.run('ROLLBACK'); } catch (_) {}
+        try { fs.unlinkSync(storedPath); } catch (_) {}
+        return next(dbErr);
+      }
     });
+  });
+
+  router.get('/shared', (req, res) => {
+    const result = db.exec(`SELECT d.id, d.title, d.description, c.name, d.mime_type,
+      d.size_bytes, d.created_at, u.email, p.permission, p.granted_at
+      FROM document_permissions p
+      JOIN documents d ON d.id = p.document_id
+      JOIN users u ON u.id = d.owner_id
+      LEFT JOIN categories c ON c.id = d.category_id
+      WHERE p.user_id = ? AND p.revoked_at IS NULL AND d.is_deleted = 0 AND u.is_active = 1
+      ORDER BY p.granted_at DESC`, [req.session.user.id]);
+    const docs = result.length ? result[0].values.map(([id,title,description,category,mimeType,sizeBytes,createdAt,ownerEmail,permission,grantedAt]) => ({
+      id, title, description, category, mimeType, sizeBytes, createdAt, ownerEmail, permission, grantedAt,
+    })) : [];
+    return res.render('documents/shared', { docs, user:req.session.user, token:csrfToken(req) });
   });
 
   function documentAccess(req, docId, write = false) {

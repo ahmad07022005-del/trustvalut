@@ -1,14 +1,18 @@
-<!DOCTYPE html>
-<html lang="en"><head>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="stylesheet" href="/styles.css" /><meta charset="UTF-8" /><title>Edit Document – TrustVault</title></head><body>
-<h1>Edit Document</h1>
-<% if (error) { %><p style="color:red"><%= error %></p><% } %>
-<form method="POST" action="/documents/<%= doc.id %>/edit">
-<input type="hidden" name="_csrf" value="<%= token %>" />
-<label>Title<br><input type="text" name="title" value="<%= doc.title %>" maxlength="200" required /></label><br><br>
-<label>Description<br><textarea name="description" maxlength="2000"><%= doc.description %></textarea></label><br><br>
-<label>Category<br><input type="text" name="category" value="<%= doc.category || '' %>" maxlength="100" /></label><br><br>
-<button type="submit">Save</button>
-</form><p><a href="/documents">Back to documents</a></p>
-</body></html>
+<!doctype html>
+<html lang="en">
+<head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>Edit Document – TrustVault</title><link rel="stylesheet" href="/styles.css" /></head>
+<body>
+  <header class="site-header"><div class="header-inner"><a class="brand" href="/"><span class="brand-mark" aria-hidden="true">T</span><span>TrustVault</span></a><div class="header-actions"><span><%= user.email %></span><a href="/documents">My documents</a></div></div></header>
+  <main class="page"><div class="page-heading"><div><h1>Edit document</h1><p class="muted">Update the title, description, or category for <strong><%= doc.title %></strong>.</p></div></div>
+    <section class="card"><% if (error) { %><p class="error" role="alert"><%= error %></p><% } %>
+      <form method="POST" action="/documents/<%= doc.id %>/edit" class="form-stack">
+        <input type="hidden" name="_csrf" value="<%= token %>" />
+        <div class="field"><label for="title">Title</label><input id="title" type="text" name="title" value="<%= doc.title %>" maxlength="200" required /></div>
+        <div class="field"><label for="description">Description</label><textarea id="description" name="description" maxlength="2000"><%= doc.description %></textarea></div>
+        <div class="field"><label for="category">Category</label><input id="category" type="text" name="category" value="<%= doc.category || '' %>" maxlength="100" /></div>
+        <div class="actions"><button type="submit">Save changes</button><a class="button secondary" href="/documents">Cancel</a></div>
+      </form>
+    </section>
+  </main>
+</body>
+</html>

@@ -1,61 +1,8 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="stylesheet" href="/styles.css" />
-  <meta charset="UTF-8" />
-  <title>User Management – TrustVault Admin</title>
-</head>
-<body>
-  <h1>User Management</h1>
-  <p>Signed in as <strong><%= user.email %></strong> (admin) &nbsp;|&nbsp;
-     <a href="/admin/audit">Audit log</a></p>
-
-  <% if (users.length === 0) { %>
-    <p>No users registered.</p>
-  <% } else { %>
-    <table>
-      <thead>
-        <tr>
-          <th>ID</th>
-          <th>Email</th>
-          <th>Role</th>
-          <th>Status</th>
-          <th>Registered</th>
-          <th>Action</th>
-        </tr>
-      </thead>
-      <tbody>
-        <% users.forEach(u => { %>
-        <tr>
-          <td><%= u.id %></td>
-          <td><%= u.email %></td>
-          <td><%= u.role %></td>
-          <td><%= u.isActive ? 'Active' : 'Deactivated' %></td>
-          <td><%= u.createdAt %></td>
-          <td>
-            <% if (u.id !== user.id) { %>
-              <% if (u.isActive) { %>
-                <form method="POST" action="/admin/users/<%= u.id %>/deactivate" style="display:inline">
-                  <input type="hidden" name="_csrf" value="<%= token %>" />
-                  <button type="submit">Deactivate</button>
-                </form>
-              <% } else { %>
-                <form method="POST" action="/admin/users/<%= u.id %>/activate" style="display:inline">
-                  <input type="hidden" name="_csrf" value="<%= token %>" />
-                  <button type="submit">Activate</button>
-                </form>
-              <% } %>
-            <% } else { %>
-              (you)
-            <% } %>
-          </td>
-        </tr>
-        <% }) %>
-      </tbody>
-    </table>
-  <% } %>
-
-  <p><a href="/documents">Back to documents</a></p>
-</body>
-</html>
+<head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>User Management – TrustVault Admin</title><link rel="stylesheet" href="/styles.css" /></head>
+<body><header class="site-header"><div class="header-inner"><a class="brand" href="/"><span class="brand-mark" aria-hidden="true">T</span><span>TrustVault Admin</span></a><div class="header-actions"><span><%= user.email %></span><a href="/documents">Documents</a></div></div></header>
+<main class="page"><div class="page-heading"><div><h1>User management</h1><p class="muted">Activate or deactivate TrustVault accounts.</p></div><div class="actions"><a class="button secondary" href="/admin/audit">Audit log</a><a class="button secondary" href="/admin/categories">Categories</a></div></div>
+<section class="card"><% if (users.length === 0) { %><p class="empty-state">No users registered.</p><% } else { %><div class="table-wrap"><table><thead><tr><th>ID</th><th>Email</th><th>Role</th><th>Status</th><th>Registered</th><th>Action</th></tr></thead><tbody>
+<% users.forEach(u => { %><tr><td><%= u.id %></td><td><%= u.email %></td><td><%= u.role %></td><td><%= u.isActive ? 'Active' : 'Deactivated' %></td><td><%= u.createdAt %></td><td><% if (u.id !== user.id) { %><% if (u.isActive) { %><form method="POST" action="/admin/users/<%= u.id %>/deactivate" class="inline-form"><input type="hidden" name="_csrf" value="<%= token %>" /><button type="submit" class="danger">Deactivate</button></form><% } else { %><form method="POST" action="/admin/users/<%= u.id %>/activate" class="inline-form"><input type="hidden" name="_csrf" value="<%= token %>" /><button type="submit">Activate</button></form><% } %><% } else { %><span class="muted">This is you</span><% } %></td></tr><% }) %>
+</tbody></table></div><% } %></section></main></body></html>

@@ -19,7 +19,7 @@
   <main class="page">
     <div class="page-heading">
       <div><h1>My documents</h1><p class="muted">Securely store, find, and share your files.</p></div>
-      <a class="button" href="/documents/upload">Upload document</a>
+      <div class="actions"><a class="button secondary" href="/documents/shared">Shared with me</a><a class="button" href="/documents/upload">Upload document</a></div>
     </div>
     <section class="card filter-card" aria-labelledby="filter-title">
       <h2 id="filter-title">Find a document</h2>
@@ -38,7 +38,7 @@
       <h2 id="results-title">Your files</h2>
       <% if (docs.length === 0) { %><p class="empty-state">No documents matched your filters.</p><% } else { %>
       <div class="table-wrap"><table><thead><tr><th>Title</th><th>Description</th><th>Category</th><th>Type</th><th>Size</th><th>Uploaded</th><th>Actions</th></tr></thead><tbody>
-      <% docs.forEach(doc => { %><tr><td><strong><%= doc.title %></strong></td><td><%= doc.description %></td><td><%= doc.category || '—' %></td><td><%= doc.mimeType %></td><td><%= Math.ceil(doc.sizeBytes / 1024) %> KB</td><td><%= doc.createdAt %></td><td><div class="actions"><a href="/documents/<%= doc.id %>/download">Download</a><a href="/documents/<%= doc.id %>/preview">Preview</a><a href="/documents/<%= doc.id %>/edit">Edit</a><form method="POST" action="/documents/<%= doc.id %>/delete" class="inline-form" onsubmit="return confirm('Delete this document? This cannot be undone.');"><input type="hidden" name="_csrf" value="<%= token %>" /><button type="submit" class="danger">Delete</button></form></div></td></tr><% }) %>
+      <% docs.forEach(doc => { %><tr><td><strong><%= doc.title %></strong></td><td><%= doc.description %></td><td><%= doc.category || '—' %></td><td><%= doc.mimeType %></td><td><%= Math.ceil(doc.sizeBytes / 1024) %> KB</td><td><%= doc.createdAt %></td><td><div class="actions"><a href="/documents/<%= doc.id %>/download">Download</a><a href="/documents/<%= doc.id %>/preview">Preview</a><a href="/documents/<%= doc.id %>/edit">Edit</a><a href="/documents/<%= doc.id %>/permissions">Manage access</a><form method="POST" action="/documents/<%= doc.id %>/delete" class="inline-form" onsubmit="return confirm('Delete this document? This cannot be undone.');"><input type="hidden" name="_csrf" value="<%= token %>" /><button type="submit" class="danger">Delete</button></form></div></td></tr><% }) %>
       </tbody></table></div><p class="muted">Page <%= page %></p><% } %>
     </section>
   </main>

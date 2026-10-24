@@ -6,11 +6,13 @@ TrustVault is a security-focused document management platform. Confidential docu
 
 ## Project status
 
-**Implemented and test-verified** (78+ automated tests passing):
+**Implemented and test-verified** (107 automated tests passing):
 
 - Role-based authentication (admin, viewer); bcrypt password hashing
 - Private document uploads (PDF, TXT, PNG, JPEG, DOCX; max 10 MB; magic-byte validation)
-- Secure document listing with title search
+- Optional category assignment and atomic upload-and-share with registered recipients
+- Secure document listing with title search and combined MIME/category/date/size filters
+- Shared with me dashboard with owner identity, permission, preview, and download actions
 - Per-document read/edit permissions with immediate revocation
 - Server-side authorization on every request; deactivated accounts blocked immediately
 - Tamper-evident audit trail with SHA-256 hash chain
@@ -114,8 +116,10 @@ Never commit `.env`. Use `.env.example` as a template.
 | POST | `/auth/logout` | Yes | Destroy session |
 | GET | `/documents` | Yes | List / search documents |
 | GET | `/documents/upload` | Yes | Upload form |
-| POST | `/documents/upload` | Yes | Upload document |
+| POST | `/documents/upload` | Yes | Upload privately or atomically upload and share with a registered user |
+| GET | `/documents/shared` | Yes | List active documents shared with the current user |
 | GET | `/documents/:id/download` | Yes | Download (owner or grantee) |
+| GET | `/documents/:id/preview` | Yes | Preview supported PDF/image documents (owner or grantee) |
 | GET | `/documents/:id/permissions` | Yes (owner) | Manage permissions |
 | POST | `/documents/:id/permissions/grant` | Yes (owner) | Grant read/edit access |
 | POST | `/documents/:id/permissions/:permId/revoke` | Yes (owner) | Revoke access |
@@ -162,6 +166,7 @@ For production:
 - The audit hash chain is stored in the same SQLite database; a privileged attacker who can rewrite the database file can also recompute hashes. An independently retained append-only log is stronger.
 - Rate limiting uses an in-memory store (per process). Counters reset on restart and do not sync across multiple processes. For multi-server deployments, configure a shared Redis store.
 - No production-grade virus scanning of uploaded files.
+- No email delivery or Gmail invitation integration is configured; recipients must already have an active registered account.
 - Uploaded text and Office files are validated structurally only; no antivirus scanning is provided.
 - Document deletion first persists a `pending` state and revokes access; startup reconciliation retries physical cleanup after crashes or filesystem errors.
 - Audit integrity version 2 covers detail, IP address, timestamp, and previous-hash linkage. The database-local chain does not protect against a privileged attacker who can rewrite the database and recompute hashes.

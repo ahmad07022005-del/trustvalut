@@ -26,7 +26,7 @@ const PAGE_SIZE = 50;
 
 const ALLOWED_ACTIONS  = new Set([
   'document.upload', 'document.download', 'document.edit', 'document.delete',
-  'permission.grant', 'permission.revoke',
+  'permission.grant', 'permission.update', 'permission.revoke',
   'auth.login', 'auth.logout',
   'admin.deactivate', 'admin.activate', 'admin.category.delete',
 ]);

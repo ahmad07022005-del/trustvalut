@@ -1,35 +1,35 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="stylesheet" href="/styles.css" />
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Upload Document – TrustVault</title>
+  <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <h1>Upload Document</h1>
-  <% if (error) { %>
-    <p style="color:red;"><%= error %></p>
-  <% } %>
-  <form method="POST" action="/documents/upload"
-        enctype="multipart/form-data" autocomplete="off">
-    <input type="hidden" name="_csrf" value="<%= token %>" />
-
-    <label>Title<br>
-      <input type="text" name="title" required maxlength="200" />
-    </label><br><br>
-
-    <label>Description<br>
-      <textarea name="description" maxlength="2000"></textarea>
-    </label><br><br>
-
-    <label>File (PDF, TXT, PNG, JPEG, DOCX — max 10 MB)<br>
-      <input type="file" name="file" required
-             accept=".pdf,.txt,.png,.jpg,.jpeg,.docx" />
-    </label><br><br>
-
-    <button type="submit">Upload</button>
-  </form>
-  <p><a href="/documents">Back to documents</a></p>
+  <header class="site-header"><div class="header-inner"><a class="brand" href="/"><span class="brand-mark" aria-hidden="true">T</span><span>TrustVault</span></a><div class="header-actions"><span><%= user.email %></span><a href="/documents">My documents</a></div></div></header>
+  <main class="page">
+    <div class="page-heading"><div><h1>Upload document</h1><p class="muted">Keep it private or share it with a registered TrustVault user.</p></div></div>
+    <section class="card" aria-labelledby="upload-title">
+      <h2 id="upload-title">Document details</h2>
+      <% if (error) { %><p class="error" role="alert"><%= error %></p><% } %>
+      <form method="POST" action="/documents/upload" enctype="multipart/form-data" autocomplete="off" class="form-stack">
+        <input type="hidden" name="_csrf" value="<%= token %>" />
+        <div class="field"><label for="title">Title</label><input id="title" type="text" name="title" required maxlength="200" value="<%= title || '' %>" /></div>
+        <div class="field"><label for="description">Description <span class="muted">(optional)</span></label><textarea id="description" name="description" maxlength="2000"><%= description || '' %></textarea></div>
+        <div class="field"><label for="category">Category <span class="muted">(optional)</span></label><input id="category" type="text" name="category" maxlength="100" value="<%= category || '' %>" placeholder="e.g. Finance" /></div>
+        <div class="field"><label for="file">File</label><input id="file" type="file" name="file" required accept=".pdf,.txt,.png,.jpg,.jpeg,.docx" /><span class="form-help">Allowed: <%= allowedTypes %>. Maximum 10 MB.</span></div>
+        <div class="card" style="box-shadow:none; background:#f8faff;">
+          <h2>Share with someone <span class="muted">(optional)</span></h2>
+          <p class="form-help">The recipient must already have an active TrustVault account. No email is sent automatically.</p>
+          <div class="filter-grid">
+            <div class="field"><label for="share_email">Recipient email</label><input id="share_email" type="email" name="share_email" maxlength="254" value="<%= shareEmail || '' %>" placeholder="recipient@example.com" /></div>
+            <div class="field"><label for="share_permission">Permission</label><select id="share_permission" name="share_permission"><option value="read" <%= sharePermission === 'read' ? 'selected' : '' %>>Read — preview and download</option><option value="edit" <%= sharePermission === 'edit' ? 'selected' : '' %>>Edit — update document metadata</option></select></div>
+          </div>
+        </div>
+        <div class="actions"><button type="submit">Upload document</button><a class="button secondary" href="/documents">Cancel</a></div>
+      </form>
+    </section>
+  </main>
 </body>
 </html>

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Shared with me – TrustVault</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="site-header"><div class="header-inner"><a class="brand" href="/"><span class="brand-mark" aria-hidden="true">T</span><span>TrustVault</span></a><div class="header-actions"><span><%= user.email %></span><form method="POST" action="/auth/logout" class="inline-form"><input type="hidden" name="_csrf" value="<%= token %>" /><button type="submit">Sign out</button></form></div></div></header>
+  <main class="page">
+    <div class="page-heading"><div><h1>Shared with me</h1><p class="muted">Documents other TrustVault users have shared with you.</p></div><a class="button secondary" href="/documents">My documents</a></div>
+    <section class="card" aria-labelledby="shared-title">
+      <h2 id="shared-title">Shared documents</h2>
+      <% if (docs.length === 0) { %><p class="empty-state">No documents have been shared with you yet.</p><% } else { %>
+      <div class="table-wrap"><table><thead><tr><th>Document</th><th>Owner</th><th>Category</th><th>Permission</th><th>Shared</th><th>Actions</th></tr></thead><tbody>
+      <% docs.forEach(doc => { %><tr><td><strong><%= doc.title %></strong><br><span class="muted"><%= doc.description %></span></td><td><%= doc.ownerEmail %></td><td><%= doc.category || '—' %></td><td><%= doc.permission === 'edit' ? 'Edit' : 'Read' %></td><td><%= doc.grantedAt %></td><td><div class="actions"><a href="/documents/<%= doc.id %>/preview">Preview</a><a href="/documents/<%= doc.id %>/download">Download</a><% if (doc.permission === 'edit') { %><a href="/documents/<%= doc.id %>/edit">Edit</a><% } %></div></td></tr><% }) %>
+      </tbody></table></div><% } %>
+    </section>
+  </main>
+</body>
+</html>
