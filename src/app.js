@@ -86,6 +86,12 @@ function createApp(db = null) {
 
   // ── Routes ────────────────────────────────────────────────────────────────
 
+  // Homepage: send authenticated users to their documents and visitors to login.
+  app.get('/', (req, res) => {
+    if (req.session && req.session.user) return res.redirect('/documents');
+    return res.redirect('/auth/login');
+  });
+
   // Health check — no auth required.
   app.get('/health', (_req, res) => {
     res.status(200).json({ status: 'ok', ts: new Date().toISOString() });
