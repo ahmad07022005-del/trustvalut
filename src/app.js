@@ -26,6 +26,11 @@ const { requireActiveAccount }    = require('./middleware/auth');
 function createApp(db = null) {
   const app = express();
 
+  // Trust only an explicitly configured proxy topology.
+  const trustProxy = process.env.TRUST_PROXY;
+  if (trustProxy === 'loopback') app.set('trust proxy', 'loopback');
+  else if (trustProxy === 'true') app.set('trust proxy', 1);
+
   // ── Security headers ───────────────────────────────────────────────────────
   app.use(helmet());
 
@@ -43,13 +48,16 @@ function createApp(db = null) {
   // which is excluded from Git in .gitignore.
   const sessionSecret = process.env.SESSION_SECRET;
   if (!sessionSecret && process.env.NODE_ENV !== 'test') {
-    // Warn loudly in development if the secret is not set.
     console.warn('[warn] SESSION_SECRET is not set. Set it in your .env file.');
+  }
+  if (process.env.NODE_ENV === 'production' &&
+      (!sessionSecret || sessionSecret.length < 32)) {
+    throw new Error('SESSION_SECRET must be at least 32 characters in production');
   }
 
   const sessionConfig = {
     name: 'sid',
-    secret: sessionSecret || 'dev-only-insecure-secret',
+    secret: sessionSecret || 'local-development-only-secret-change-me',
     resave: false,
     saveUninitialized: false,
     cookie: {
@@ -88,7 +96,7 @@ function createApp(db = null) {
     app.use('/auth',                          createAuthRouter(db));
     app.use('/documents',        requireAuth, requireActiveAccount(db), createDocumentRouter(db));
     app.use('/documents/:id/permissions', requireAuth, requireActiveAccount(db), createPermissionsRouter(db));
-    app.use('/admin',            requireAuth, requireActiveAccount(db), requireRole('admin'), createAdminRouter(db));
+    app.use('/admin',            requireAuth, requireActiveAccount(db), requireRole('admin', db), createAdminRouter(db));
   }
 
   // ── Error handlers ────────────────────────────────────────────────────────

@@ -19,17 +19,29 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);
 
+-- ── Categories ───────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS categories (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  created_by INTEGER REFERENCES users (id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
 -- ── Documents ────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS documents (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   owner_id     INTEGER NOT NULL REFERENCES users (id) ON DELETE RESTRICT,
   title        TEXT    NOT NULL,
+  description  TEXT    NOT NULL DEFAULT '',
+  category_id  INTEGER REFERENCES categories (id) ON DELETE SET NULL,
   -- Filename stored on disk (never the original upload name)
   storage_name TEXT    NOT NULL UNIQUE,
   mime_type    TEXT    NOT NULL,
   size_bytes   INTEGER NOT NULL CHECK (size_bytes > 0),
   is_deleted   INTEGER NOT NULL DEFAULT 0
                        CHECK (is_deleted IN (0, 1)),
+  deleted_at   TEXT,
+  deletion_error TEXT,
   created_at   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   updated_at   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );

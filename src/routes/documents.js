@@ -1,58 +1,30 @@
 'use strict';
 
-/**
- * documents.js — Secure document upload and download routes
- *
- * Security principles enforced here:
- *  - Every route requires an authenticated session (requireAuth applied in app.js).
- *  - Files are stored in ./uploads/ using a UUID storage name; the original
- *    filename is never used on disk.
- *  - MIME type is validated by both extension allowlist and magic-byte inspection.
- *  - File size is capped at 10 MB by multer before the file hits disk.
- *  - Downloads check server-side ownership OR an active permission grant.
- *    The document ID in the URL is never trusted without this DB lookup.
- *  - A non-owner with no grant receives 403. The document ID is not confirmed
- *    or denied in the response body (avoids confirming document existence to
- *    unauthorized requesters).
- *  - All DB queries use parameterised statements.
- *  - persist() is called after every write.
- *  - Audit events are written for every significant outcome (success / denied /
- *    error). An audit write failure surfaces as a console.error but never
- *    blocks the operation response.
- */
-
 const express = require('express');
-const multer  = require('multer');
-const path    = require('path');
-const fs      = require('fs');
-const crypto  = require('crypto');
-
-const { csrfToken }       = require('../middleware/csrf');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const crypto = require('crypto');
+const { csrfToken } = require('../middleware/csrf');
 const { writeAuditEvent } = require('../lib/audit');
-const { uploadLimiter }   = require('../middleware/rateLimiter');
+const { uploadLimiter } = require('../middleware/rateLimiter');
+const { containedPath } = require('../lib/paths');
 
-// ── Allowed file types ─────────────────────────────────────────────────────
 const ALLOWED_TYPES = {
   'application/pdf': { ext: '.pdf', magic: [0x25, 0x50, 0x44, 0x46] },
-  'text/plain':      { ext: '.txt', magic: null },
-  'image/png':       { ext: '.png', magic: [0x89, 0x50, 0x4E, 0x47] },
-  'image/jpeg':      { ext: '.jpg', magic: [0xFF, 0xD8, 0xFF] },
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
-                     { ext: '.docx', magic: [0x50, 0x4B, 0x03, 0x04] },
+  'text/plain': { ext: '.txt', magic: null },
+  'image/png': { ext: '.png', magic: [0x89, 0x50, 0x4e, 0x47] },
+  'image/jpeg': { ext: '.jpg', magic: [0xff, 0xd8, 0xff] },
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': { ext: '.docx', magic: [0x50, 0x4b, 0x03, 0x04] },
 };
-
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const MAX_TITLE_LEN = 200;
+const MAX_DESCRIPTION_LEN = 2000;
 
 function createStorage(uploadsDir) {
   return multer.diskStorage({
-    destination(_req, _file, cb) {
-      fs.mkdirSync(uploadsDir, { recursive: true });
-      cb(null, uploadsDir);
-    },
-    filename(_req, _file, cb) {
-      cb(null, crypto.randomUUID());
-    },
+    destination(_req, _file, cb) { fs.mkdirSync(uploadsDir, { recursive: true }); cb(null, uploadsDir); },
+    filename(_req, _file, cb) { cb(null, crypto.randomUUID()); },
   });
 }
 
@@ -61,13 +33,10 @@ function createUploader(uploadsDir) {
     storage: createStorage(uploadsDir),
     limits: { fileSize: MAX_FILE_SIZE, files: 1 },
     fileFilter(_req, file, cb) {
-      if (ALLOWED_TYPES[file.mimetype]) {
-        cb(null, true);
-      } else {
-        const err = new Error('File type not allowed');
-        err.code  = 'DISALLOWED_TYPE';
-        cb(err, false);
-      }
+      const spec = ALLOWED_TYPES[file.mimetype];
+      const ext = path.extname(file.originalname || '').toLowerCase();
+      if (spec && ext === spec.ext) return cb(null, true);
+      const err = new Error('File type not allowed'); err.code = 'DISALLOWED_TYPE'; return cb(err, false);
     },
   });
 }
@@ -75,290 +44,140 @@ function createUploader(uploadsDir) {
 function validateMagicBytes(filePath, mimeType) {
   const spec = ALLOWED_TYPES[mimeType];
   if (!spec || !spec.magic) return true;
-  const buf       = Buffer.alloc(spec.magic.length);
-  const fd        = fs.openSync(filePath, 'r');
-  const bytesRead = fs.readSync(fd, buf, 0, spec.magic.length, 0);
-  fs.closeSync(fd);
-  if (bytesRead < spec.magic.length) return false;
-  return spec.magic.every((byte, i) => buf[i] === byte);
+  const fd = fs.openSync(filePath, 'r');
+  try {
+    const buf = Buffer.alloc(spec.magic.length);
+    const bytesRead = fs.readSync(fd, buf, 0, spec.magic.length, 0);
+    return bytesRead === spec.magic.length && spec.magic.every((byte, i) => buf[i] === byte);
+  } finally { fs.closeSync(fd); }
 }
 
-/**
- * @param {import('sql.js').Database} db
- * @param {object} [opts]
- * @param {string} [opts.uploadsDir]
- */
-function createDocumentRouter(db, opts = {}) {
-  const uploadsDir = opts.uploadsDir
-    ? path.resolve(opts.uploadsDir)
-    : path.resolve('./uploads');
+function parseId(value) {
+  const id = parseInt(value, 10);
+  return Number.isInteger(id) && id > 0 && String(id) === value ? id : null;
+}
 
+function createDocumentRouter(db, opts = {}) {
+  const uploadsDir = opts.uploadsDir ? path.resolve(opts.uploadsDir) : path.resolve('./uploads');
   const upload = createUploader(uploadsDir);
   const router = express.Router();
+  const audit = (req, event) => writeAuditEvent(db, req.app.locals.persistDb, {
+    actorId: req.session && req.session.user ? req.session.user.id : null,
+    ipAddress: req.ip, ...event,
+  });
+  const tokenOk = req => {
+    const submitted = req.body._csrf || req.headers['x-csrf-token'];
+    const ok = submitted && req.session && submitted === req.session.csrfToken;
+    if (ok) req.session.csrfToken = crypto.randomBytes(32).toString('hex');
+    return Boolean(ok);
+  };
 
-  // Helper: shorthand for writing an audit event using app.locals.persistDb
-  function audit(req, event) {
-    return writeAuditEvent(db, req.app.locals.persistDb, {
-      actorId:   req.session && req.session.user ? req.session.user.id : null,
-      ipAddress: req.ip,
-      ...event,
-    });
-  }
-
-  // ── GET /documents ───────────────────────────────────────────────────────
-  // Optional ?q= parameter searches document titles.
-  // Authorization rules (owner OR active grant) are enforced regardless of q.
   router.get('/', (req, res) => {
     const userId = req.session.user.id;
-
-    // Sanitize the search term: trim whitespace, cap length to avoid
-    // absurdly long LIKE patterns. Empty string means "no filter".
-    const rawQ  = typeof req.query.q === 'string' ? req.query.q.trim() : '';
-    const query = rawQ.length > 0 ? rawQ.slice(0, 200) : '';
-
-    // Build the SQL conditionally. When no search term is given the query
-    // is identical to the original list query.
-    const searchClause = query ? 'AND d.title LIKE ?' : '';
-    // Wrap the term in % wildcards for a contains-search.
-    // The binding is parameterized — the user-supplied value never touches SQL text.
-    const params = query
-      ? [userId, userId, `%${query}%`]
-      : [userId, userId];
-
-    const result = db.exec(
-      `SELECT d.id, d.title, d.mime_type, d.size_bytes, d.created_at
-       FROM documents d
-       WHERE d.is_deleted = 0
-         AND (
-           d.owner_id = ?
-           OR EXISTS (
-             SELECT 1 FROM document_permissions p
-             WHERE p.document_id = d.id
-               AND p.user_id     = ?
-               AND p.revoked_at  IS NULL
-           )
-         )
-         ${searchClause}
-       ORDER BY d.created_at DESC`,
-      params
-    );
-
-    const docs = result.length > 0
-      ? result[0].values.map(([id, title, mimeType, sizeBytes, createdAt]) => ({
-          id, title, mimeType, sizeBytes, createdAt,
-        }))
-      : [];
-
-    res.render('documents/index', { docs, user: req.session.user, query });
+    const query = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 200) : '';
+    const mime = typeof req.query.mime === 'string' ? req.query.mime.trim().slice(0, 100) : '';
+    const category = typeof req.query.category === 'string' ? req.query.category.trim().slice(0, 100) : '';
+    const from = /^\d{4}-\d{2}-\d{2}$/.test(req.query.from || '') ? req.query.from : '';
+    const to = /^\d{4}-\d{2}-\d{2}$/.test(req.query.to || '') ? req.query.to : '';
+    const minSize = Number.isInteger(Number(req.query.minSize)) && Number(req.query.minSize) >= 0 ? Number(req.query.minSize) : null;
+    const maxSize = Number.isInteger(Number(req.query.maxSize)) && Number(req.query.maxSize) >= 0 ? Number(req.query.maxSize) : null;
+    const page = Math.max(1, Math.min(10000, parseInt(req.query.page, 10) || 1));
+    const filters = [];
+    const filterParams = [];
+    if (query) { filters.push('d.title LIKE ?'); filterParams.push(`%${query}%`); }
+    if (mime) { filters.push('d.mime_type = ?'); filterParams.push(mime); }
+    if (category) { filters.push('c.name = ?'); filterParams.push(category); }
+    if (from) { filters.push('d.created_at >= ?'); filterParams.push(`${from}T00:00:00.000Z`); }
+    if (to) { filters.push("d.created_at < date(?, '+1 day')"); filterParams.push(to); }
+    if (minSize !== null) { filters.push('d.size_bytes >= ?'); filterParams.push(minSize); }
+    if (maxSize !== null) { filters.push('d.size_bytes <= ?'); filterParams.push(maxSize); }
+    const clause = filters.length ? `AND ${filters.join(' AND ')}` : '';
+    const rows = db.exec(`SELECT d.id,d.title,d.description,c.name,d.mime_type,d.size_bytes,d.created_at
+      FROM documents d LEFT JOIN categories c ON c.id=d.category_id
+      WHERE d.is_deleted=0 AND (d.owner_id=? OR EXISTS(SELECT 1 FROM document_permissions p WHERE p.document_id=d.id AND p.user_id=? AND p.revoked_at IS NULL))
+      ${clause} ORDER BY d.created_at DESC LIMIT ? OFFSET ?`, [userId, userId, ...filterParams, 50, (page - 1) * 50]);
+    const docs = rows.length ? rows[0].values.map(([id,title,description,categoryName,mimeType,sizeBytes,createdAt]) => ({ id,title,description,category:categoryName,mimeType,sizeBytes,createdAt })) : [];
+    const categories = db.exec('SELECT name FROM categories ORDER BY name').flatMap(r => r.values.map(v => v[0]));
+    res.render('documents/index', { docs, user: req.session.user, query, mime, category, from, to, minSize, maxSize, page, categories, token: csrfToken(req) });
   });
 
-  // ── GET /documents/upload ────────────────────────────────────────────────
-  router.get('/upload', (req, res) => {
-    res.render('documents/upload', {
-      error: null,
-      token: csrfToken(req),
-      user: req.session.user,
-      allowedTypes: Object.keys(ALLOWED_TYPES).join(', '),
-    });
-  });
+  router.get('/upload', (req, res) => res.render('documents/upload', { error:null, token:csrfToken(req), user:req.session.user, allowedTypes:Object.keys(ALLOWED_TYPES).join(', ') }));
 
-  // ── POST /documents/upload ───────────────────────────────────────────────
-  // CSRF is verified manually after multer, because req.body is empty until
-  // multer parses the multipart form.
-  // The upload rate limiter runs first (before multer) to cheaply reject floods.
   router.post('/upload', uploadLimiter, (req, res, next) => {
-    const uploader = upload.single('file');
-
-    uploader(req, res, async (err) => {
-      // ── multer errors ────────────────────────────────────────────────────
+    upload.single('file')(req, res, async err => {
       if (err) {
-        if (err.code === 'LIMIT_FILE_SIZE') {
-          audit(req, {
-            action: 'document.upload', resource: null,
-            outcome: 'error', detail: { reason: 'file_too_large' },
-          });
-          return res.status(413).render('documents/upload', {
-            error: 'File exceeds the 10 MB size limit.',
-            token: csrfToken(req),
-            user: req.session.user,
-            allowedTypes: Object.keys(ALLOWED_TYPES).join(', '),
-          });
-        }
-        if (err.code === 'DISALLOWED_TYPE') {
-          audit(req, {
-            action: 'document.upload', resource: null,
-            outcome: 'error', detail: { reason: 'disallowed_mime_type' },
-          });
-          return res.status(400).render('documents/upload', {
-            error: 'File type not allowed. Permitted: PDF, TXT, PNG, JPEG, DOCX.',
-            token: csrfToken(req),
-            user: req.session.user,
-            allowedTypes: Object.keys(ALLOWED_TYPES).join(', '),
-          });
-        }
+        if (err.code === 'LIMIT_FILE_SIZE') { audit(req,{action:'document.upload',resource:null,outcome:'error',detail:{reason:'file_too_large'}}); return res.status(413).render('documents/upload', { error:'File exceeds the 10 MB size limit.', token:csrfToken(req), user:req.session.user, allowedTypes:Object.keys(ALLOWED_TYPES).join(', ') }); }
+        if (err.code === 'DISALLOWED_TYPE') { audit(req,{action:'document.upload',resource:null,outcome:'error',detail:{reason:'disallowed_mime_type'}}); return res.status(400).render('documents/upload', { error:'File type and extension are not allowed or do not match.', token:csrfToken(req), user:req.session.user, allowedTypes:Object.keys(ALLOWED_TYPES).join(', ') }); }
         return next(err);
       }
-
-      // ── CSRF check ───────────────────────────────────────────────────────
-      const submittedCsrf = req.body._csrf || req.headers['x-csrf-token'];
-      const storedCsrf    = req.session && req.session.csrfToken;
-      if (!submittedCsrf || !storedCsrf || submittedCsrf !== storedCsrf) {
-        if (req.file && req.file.path) {
-          try { fs.unlinkSync(req.file.path); } catch (_) {}
-        }
-        return res.status(403).json({ error: 'Invalid or missing CSRF token' });
-      }
-      req.session.csrfToken = crypto.randomBytes(32).toString('hex');
-
-      // ── No file uploaded ─────────────────────────────────────────────────
-      if (!req.file) {
-        audit(req, {
-          action: 'document.upload', resource: null,
-          outcome: 'error', detail: { reason: 'no_file' },
-        });
-        return res.status(400).render('documents/upload', {
-          error: 'Please select a file to upload.',
-          token: csrfToken(req),
-          user: req.session.user,
-          allowedTypes: Object.keys(ALLOWED_TYPES).join(', '),
-        });
-      }
-
-      const storedPath = req.file.path;
-
-      // ── Magic-byte validation ─────────────────────────────────────────────
-      if (!validateMagicBytes(storedPath, req.file.mimetype)) {
-        fs.unlinkSync(storedPath);
-        audit(req, {
-          action: 'document.upload', resource: null,
-          outcome: 'error', detail: { reason: 'magic_byte_mismatch' },
-        });
-        return res.status(400).render('documents/upload', {
-          error: 'File content does not match its declared type.',
-          token: csrfToken(req),
-          user: req.session.user,
-          allowedTypes: Object.keys(ALLOWED_TYPES).join(', '),
-        });
-      }
-
-      // ── Title validation ──────────────────────────────────────────────────
-      const title = (req.body.title || '').trim();
-      if (!title || title.length > MAX_TITLE_LEN) {
-        fs.unlinkSync(storedPath);
-        audit(req, {
-          action: 'document.upload', resource: null,
-          outcome: 'error', detail: { reason: 'invalid_title' },
-        });
-        return res.status(400).render('documents/upload', {
-          error: `Title is required and must be ${MAX_TITLE_LEN} characters or fewer.`,
-          token: csrfToken(req),
-          user: req.session.user,
-          allowedTypes: Object.keys(ALLOWED_TYPES).join(', '),
-        });
-      }
-
-      // ── Insert document row ───────────────────────────────────────────────
-      let newDocId = null;
+      if (!tokenOk(req)) { if (req.file) try { fs.unlinkSync(req.file.path); } catch (_) {} return res.status(403).json({ error:'Invalid or missing CSRF token' }); }
+      if (!req.file) { audit(req,{action:'document.upload',resource:null,outcome:'error',detail:{reason:'no_file'}}); return res.status(400).render('documents/upload', { error:'Please select a file to upload.', token:csrfToken(req), user:req.session.user, allowedTypes:Object.keys(ALLOWED_TYPES).join(', ') }); }
+      const storedPath = containedPath(uploadsDir, req.file.filename);
+      if (!validateMagicBytes(storedPath, req.file.mimetype)) { fs.unlinkSync(storedPath); audit(req,{action:'document.upload',resource:null,outcome:'error',detail:{reason:'magic_byte_mismatch'}}); return res.status(400).render('documents/upload', { error:'File content does not match its declared type.', token:csrfToken(req), user:req.session.user, allowedTypes:Object.keys(ALLOWED_TYPES).join(', ') }); }
+      const title = typeof req.body.title === 'string' ? req.body.title.trim() : '';
+      const description = typeof req.body.description === 'string' ? req.body.description.trim() : '';
+      if (!title || title.length > MAX_TITLE_LEN || description.length > MAX_DESCRIPTION_LEN) { fs.unlinkSync(storedPath); audit(req,{action:'document.upload',resource:null,outcome:'error',detail:{reason:'invalid_title_or_description'}}); return res.status(400).render('documents/upload', { error:'Title or description is invalid.', token:csrfToken(req), user:req.session.user, allowedTypes:Object.keys(ALLOWED_TYPES).join(', ') }); }
       try {
-        db.run(
-          `INSERT INTO documents (owner_id, title, storage_name, mime_type, size_bytes)
-           VALUES (?, ?, ?, ?, ?)`,
-          [
-            req.session.user.id,
-            title,
-            req.file.filename,
-            req.file.mimetype,
-            req.file.size,
-          ]
-        );
+        db.run('INSERT INTO documents (owner_id,title,description,storage_name,mime_type,size_bytes) VALUES (?,?,?,?,?,?)', [req.session.user.id,title,description,req.file.filename,req.file.mimetype,req.file.size]);
         req.app.locals.persistDb();
-
-        const idRow = db.exec('SELECT last_insert_rowid()');
-        newDocId    = idRow[0].values[0][0];
-      } catch (dbErr) {
-        fs.unlinkSync(storedPath);
-        audit(req, {
-          action: 'document.upload', resource: null,
-          outcome: 'error', detail: { reason: 'db_insert_failed' },
-        });
-        return next(dbErr);
-      }
-
-      audit(req, {
-        action:   'document.upload',
-        resource: `document:${newDocId}`,
-        outcome:  'success',
-        detail:   { docId: newDocId, mimeType: req.file.mimetype },
-      });
-
-      return res.redirect('/documents');
+        const id = db.exec('SELECT last_insert_rowid()')[0].values[0][0];
+        audit(req, { action:'document.upload', resource:`document:${id}`, outcome:'success', detail:{ docId:id, mimeType:req.file.mimetype } });
+        return res.redirect('/documents');
+      } catch (dbErr) { try { fs.unlinkSync(storedPath); } catch (_) {} return next(dbErr); }
     });
   });
 
-  // ── GET /documents/:id/download ──────────────────────────────────────────
-  router.get('/:id/download', (req, res) => {
-    const docId = parseInt(req.params.id, 10);
-    if (!Number.isInteger(docId) || docId <= 0 || String(docId) !== req.params.id) {
-      return res.status(400).json({ error: 'Invalid document ID' });
-    }
+  function documentAccess(req, docId, write = false) {
+    const result = db.exec(`SELECT d.id,d.title,d.description,d.storage_name,d.mime_type,d.owner_id,c.name
+      FROM documents d LEFT JOIN categories c ON c.id=d.category_id WHERE d.id=? AND d.is_deleted=0 AND
+      (d.owner_id=? OR EXISTS(SELECT 1 FROM document_permissions p WHERE p.document_id=d.id AND p.user_id=? AND p.permission='edit' AND p.revoked_at IS NULL) OR
+       (${write ? '0' : 'EXISTS(SELECT 1 FROM document_permissions p2 WHERE p2.document_id=d.id AND p2.user_id=? AND p2.revoked_at IS NULL)'}))`, write ? [docId,req.session.user.id,req.session.user.id] : [docId,req.session.user.id,req.session.user.id,req.session.user.id]);
+    return result.length && result[0].values.length ? result[0].values[0] : null;
+  }
 
-    const userId = req.session.user.id;
-
-    const result = db.exec(
-      `SELECT d.storage_name, d.mime_type, d.title
-       FROM documents d
-       WHERE d.id         = ?
-         AND d.is_deleted = 0
-         AND (
-           d.owner_id = ?
-           OR EXISTS (
-             SELECT 1 FROM document_permissions p
-             WHERE p.document_id = d.id
-               AND p.user_id     = ?
-               AND p.revoked_at  IS NULL
-           )
-         )`,
-      [docId, userId, userId]
-    );
-
-    if (result.length === 0 || result[0].values.length === 0) {
-      // Audit the denial without revealing document metadata to the requester.
-      audit(req, {
-        action:   'document.download',
-        resource: `document:${docId}`,
-        outcome:  'denied',
-        detail:   { reason: 'no_access' },
-      });
-      return res.status(403).json({ error: 'Forbidden' });
-    }
-
-    const [storageName, mimeType, title] = result[0].values[0];
-    const filePath = path.join(uploadsDir, storageName);
-
-    if (!fs.existsSync(filePath)) {
-      console.error(`[download] file missing on disk: ${storageName}`);
-      audit(req, {
-        action:   'document.download',
-        resource: `document:${docId}`,
-        outcome:  'error',
-        detail:   { reason: 'file_missing_on_disk' },
-      });
-      return res.status(500).json({ error: 'Internal server error' });
-    }
-
-    audit(req, {
-      action:   'document.download',
-      resource: `document:${docId}`,
-      outcome:  'success',
-      detail:   { docId },
-    });
-
-    res.setHeader('Content-Disposition',
-      `attachment; filename="${encodeURIComponent(title)}"`);
-    res.setHeader('Content-Type', mimeType);
-    res.sendFile(filePath);
+  router.get('/:id/edit', (req,res) => {
+    const id = parseId(req.params.id); if (!id) return res.status(400).json({error:'Invalid document ID'});
+    const doc = documentAccess(req,id,true); if (!doc) return res.status(403).json({error:'Forbidden'});
+    return res.render('documents/edit', { doc:{ id:doc[0], title:doc[1], description:doc[2], category:doc[6] }, token:csrfToken(req), user:req.session.user, error:null });
   });
 
+  router.post('/:id/edit', (req,res) => {
+    const id = parseId(req.params.id); if (!id) return res.status(400).json({error:'Invalid document ID'});
+    if (!tokenOk(req)) return res.status(403).json({error:'Invalid or missing CSRF token'});
+    const doc = documentAccess(req,id,true); if (!doc) { audit(req,{action:'document.edit',resource:`document:${id}`,outcome:'denied',detail:{reason:'no_edit_access'}}); return res.status(403).json({error:'Forbidden'}); }
+    const title = typeof req.body.title === 'string' ? req.body.title.trim() : '';
+    const description = typeof req.body.description === 'string' ? req.body.description.trim() : '';
+    const categoryName = typeof req.body.category === 'string' ? req.body.category.trim().slice(0,100) : '';
+    if (!title || title.length > MAX_TITLE_LEN || description.length > MAX_DESCRIPTION_LEN) return res.status(400).json({error:'Invalid metadata'});
+    let categoryId = null;
+    if (categoryName) { db.run('INSERT OR IGNORE INTO categories (name,created_by) VALUES (?,?)',[categoryName,req.session.user.id]); categoryId=db.exec('SELECT id FROM categories WHERE name=?',[categoryName])[0].values[0][0]; }
+    db.run("UPDATE documents SET title=?,description=?,category_id=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",[title,description,categoryId,id]); req.app.locals.persistDb();
+    audit(req,{action:'document.edit',resource:`document:${id}`,outcome:'success',detail:{docId:id}}); return res.redirect('/documents');
+  });
+
+  router.post('/:id/delete', (req,res) => {
+    const id = parseId(req.params.id); if (!id) return res.status(400).json({error:'Invalid document ID'});
+    if (!tokenOk(req)) return res.status(403).json({error:'Invalid or missing CSRF token'});
+    const row=db.exec('SELECT storage_name,owner_id FROM documents WHERE id=? AND is_deleted=0',[id]);
+    if (!row.length || !row[0].values.length || row[0].values[0][1] !== req.session.user.id) return res.status(403).json({error:'Forbidden'});
+    const filePath=containedPath(uploadsDir,row[0].values[0][0]);
+    try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch (err) { db.run('UPDATE documents SET deletion_error=? WHERE id=?',[String(err.message).slice(0,200),id]); req.app.locals.persistDb(); audit(req,{action:'document.delete',resource:`document:${id}`,outcome:'error',detail:{reason:'file_delete_failed'}}); return res.status(500).json({error:'Document could not be securely deleted'}); }
+    db.run("UPDATE documents SET is_deleted=1,deleted_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),deletion_error=NULL WHERE id=?",[id]);
+    db.run("UPDATE document_permissions SET revoked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE document_id=? AND revoked_at IS NULL",[id]); req.app.locals.persistDb();
+    audit(req,{action:'document.delete',resource:`document:${id}`,outcome:'success',detail:{docId:id}}); return res.redirect('/documents');
+  });
+
+  function streamFile(req,res,preview) {
+    const id=parseId(req.params.id); if (!id) return res.status(400).json({error:'Invalid document ID'});
+    const result=db.exec(`SELECT d.storage_name,d.mime_type,d.title FROM documents d WHERE d.id=? AND d.is_deleted=0 ${preview ? "AND d.mime_type IN ('application/pdf','image/png','image/jpeg')" : ''} AND (d.owner_id=? OR EXISTS(SELECT 1 FROM document_permissions p WHERE p.document_id=d.id AND p.user_id=? AND p.revoked_at IS NULL))`,[id,req.session.user.id,req.session.user.id]);
+    if (!result.length || !result[0].values.length) { audit(req,{action:preview?'document.preview':'document.download',resource:`document:${id}`,outcome:'denied',detail:{reason:'no_access'}}); return res.status(403).json({error:'Forbidden'}); }
+    const [storageName,mimeType,title]=result[0].values[0]; const filePath=containedPath(uploadsDir,storageName);
+    if (!fs.existsSync(filePath)) { audit(req,{action:preview?'document.preview':'document.download',resource:`document:${id}`,outcome:'error',detail:{reason:'file_missing_on_disk'}}); return res.status(500).json({error:'Internal server error'}); }
+    audit(req,{action:preview?'document.preview':'document.download',resource:`document:${id}`,outcome:'success',detail:{docId:id}});
+    res.setHeader('Content-Type',mimeType); res.setHeader('X-Content-Type-Options','nosniff'); res.setHeader('Content-Disposition',preview?'inline':`attachment; filename="${encodeURIComponent(title)}"`); return res.sendFile(filePath);
+  }
+  router.get('/:id/download',(req,res)=>streamFile(req,res,false));
+  router.get('/:id/preview',(req,res)=>streamFile(req,res,true));
   return router;
 }
 

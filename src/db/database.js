@@ -14,6 +14,7 @@
 const path       = require('path');
 const fs         = require('fs');
 const initSqlJs  = require('sql.js');
+const { applyMigrations } = require('./migrations');
 
 let _db       = null;   // sql.js Database instance
 let _filePath = null;   // absolute path to the .db file (null in-memory)
@@ -89,6 +90,8 @@ async function getDb(overridePath) {
   for (const stmt of statements) {
     _db.run(stmt + ';');
   }
+
+  applyMigrations(_db);
 
   // Persist the freshly-initialised database to disk.
   persist();

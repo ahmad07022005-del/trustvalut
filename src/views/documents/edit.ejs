@@ -1,0 +1,12 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8" /><title>Edit Document – TrustVault</title></head><body>
+<h1>Edit Document</h1>
+<% if (error) { %><p style="color:red"><%= error %></p><% } %>
+<form method="POST" action="/documents/<%= doc.id %>/edit">
+<input type="hidden" name="_csrf" value="<%= token %>" />
+<label>Title<br><input type="text" name="title" value="<%= doc.title %>" maxlength="200" required /></label><br><br>
+<label>Description<br><textarea name="description" maxlength="2000"><%= doc.description %></textarea></label><br><br>
+<label>Category<br><input type="text" name="category" value="<%= doc.category || '' %>" maxlength="100" /></label><br><br>
+<button type="submit">Save</button>
+</form><p><a href="/documents">Back to documents</a></p>
+</body></html>

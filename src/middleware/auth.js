@@ -84,9 +84,21 @@ function requireActiveAccount(db) {
  *
  * @param {...string} roles - Allowed roles, e.g. requireRole('admin')
  */
-function requireRole(...roles) {
+function requireRole(...args) {
+  const db = args[args.length - 1] && typeof args[args.length - 1].exec === 'function'
+    ? args.pop() : null;
+  const roles = args;
   return (req, res, next) => {
-    const userRole = req.session && req.session.user && req.session.user.role;
+    const sessionUser = req.session && req.session.user;
+    let userRole = sessionUser && sessionUser.role;
+    if (db && sessionUser) {
+      const result = db.exec(
+        'SELECT role FROM users WHERE id = ? AND is_active = 1',
+        [sessionUser.id]
+      );
+      userRole = result.length && result[0].values.length
+        ? result[0].values[0][0] : null;
+    }
     if (userRole && roles.includes(userRole)) {
       return next();
     }

@@ -8,6 +8,10 @@ const { getDb }     = require('./db/database');
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
 async function main() {
+  if (process.env.NODE_ENV === 'production' &&
+      (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 32)) {
+    throw new Error('SESSION_SECRET must be at least 32 characters in production');
+  }
   // Initialise database (async because sql.js loads a WASM module).
   const db = await getDb();
 

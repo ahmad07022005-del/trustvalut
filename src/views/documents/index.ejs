@@ -1,55 +1,20 @@
 <!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <title>My Documents – TrustVault</title>
-</head>
-<body>
-  <h1>My Documents</h1>
-  <p>Signed in as <strong><%= user.email %></strong> (<%= user.role %>)</p>
-
-  <a href="/documents/upload">Upload a document</a>
-
-  <form method="GET" action="/documents" style="margin-top:1em">
-    <label>Search by title
-      <input type="search" name="q" value="<%= query %>"
-             maxlength="200" placeholder="e.g. Annual Report" />
-    </label>
-    <button type="submit">Search</button>
-    <% if (query) { %>
-      <a href="/documents">Clear</a>
-    <% } %>
-  </form>
-
-  <% if (query) { %>
-    <p>Results for: <strong><%= query %></strong> (<%= docs.length %> found)</p>
-  <% } %>
-
-  <% if (docs.length === 0) { %>
-    <p><%= query ? 'No documents matched your search.' : 'You have no documents yet.' %></p>
-  <% } else { %>
-    <table>
-      <thead>
-        <tr>
-          <th>Title</th>
-          <th>Type</th>
-          <th>Size</th>
-          <th>Uploaded</th>
-          <th>Action</th>
-        </tr>
-      </thead>
-      <tbody>
-        <% docs.forEach(doc => { %>
-        <tr>
-          <td><%= doc.title %></td>
-          <td><%= doc.mimeType %></td>
-          <td><%= Math.ceil(doc.sizeBytes / 1024) %> KB</td>
-          <td><%= doc.createdAt %></td>
-          <td><a href="/documents/<%= doc.id %>/download">Download</a></td>
-        </tr>
-        <% }) %>
-      </tbody>
-    </table>
-  <% } %>
-</body>
-</html>
+<html lang="en"><head><meta charset="UTF-8" /><title>My Documents – TrustVault</title></head><body>
+<h1>My Documents</h1><p>Signed in as <strong><%= user.email %></strong> (<%= user.role %>)</p>
+<a href="/documents/upload">Upload a document</a>
+<form method="GET" action="/documents" style="margin-top:1em">
+<label>Title <input type="search" name="q" value="<%= query %>" maxlength="200" /></label>
+<label>Type <input type="text" name="mime" value="<%= mime %>" maxlength="100" /></label>
+<label>Category <input type="text" name="category" value="<%= category %>" maxlength="100" /></label>
+<label>From <input type="date" name="from" value="<%= from %>" /></label>
+<label>To <input type="date" name="to" value="<%= to %>" /></label>
+<label>Min bytes <input type="number" name="minSize" value="<%= minSize ?? '' %>" min="0" /></label>
+<label>Max bytes <input type="number" name="maxSize" value="<%= maxSize ?? '' %>" min="0" /></label>
+<button type="submit">Filter</button> <a href="/documents">Clear</a></form>
+<% if (docs.length === 0) { %><p>No documents matched your filters.</p><% } else { %>
+<table><thead><tr><th>Title</th><th>Description</th><th>Category</th><th>Type</th><th>Size</th><th>Uploaded</th><th>Actions</th></tr></thead><tbody>
+<% docs.forEach(doc => { %><tr><td><%= doc.title %></td><td><%= doc.description %></td><td><%= doc.category || '' %></td><td><%= doc.mimeType %></td><td><%= Math.ceil(doc.sizeBytes / 1024) %> KB</td><td><%= doc.createdAt %></td><td>
+<a href="/documents/<%= doc.id %>/download">Download</a> <a href="/documents/<%= doc.id %>/preview">Preview</a> <a href="/documents/<%= doc.id %>/edit">Edit</a>
+<form method="POST" action="/documents/<%= doc.id %>/delete" style="display:inline" onsubmit="return confirm('Delete this document? This cannot be undone.');"><input type="hidden" name="_csrf" value="<%= token %>" /><button type="submit">Delete</button></form>
+</td></tr><% }) %></tbody></table><p>Page <%= page %></p><% } %>
+</body></html>

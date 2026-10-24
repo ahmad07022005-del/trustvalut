@@ -90,6 +90,7 @@ Then visit `http://localhost:3000/admin/audit` to access the audit dashboard.
 | `NODE_ENV` | No | `development` | Set to `production` for secure cookies |
 | `SESSION_SECRET` | **Yes** | — | Long random string for session signing |
 | `DB_PATH` | No | `./data/trustvault.db` | SQLite database file path |
+| `TRUST_PROXY` | No | unset | Set to `loopback` only when a trusted local reverse proxy terminates TLS |
 | `RATE_LOGIN_MAX` | No | `10` | Max login attempts per window per IP |
 | `RATE_LOGIN_WINDOW_MS` | No | `900000` | Login rate-limit window (ms); default 15 min |
 | `RATE_REGISTER_MAX` | No | `5` | Max registration attempts per window per IP |
@@ -133,6 +134,10 @@ All tests use an in-memory database and temporary upload directories. No real fi
 
 ## Deployment notes
 
+Database schema upgrades are applied by the ordered, idempotent migration runner
+in `src/db/migrations.js` when the application starts. Back up `DB_PATH` before
+deploying a new revision and verify the resulting `schema_migrations` table.
+
 For production:
 
 1. Set `NODE_ENV=production` — this enables `secure: true` on session cookies (requires HTTPS).
@@ -157,6 +162,7 @@ For production:
 - The audit hash chain is stored in the same SQLite database; a privileged attacker who can rewrite the database file can also recompute hashes. An independently retained append-only log is stronger.
 - Rate limiting uses an in-memory store (per process). Counters reset on restart and do not sync across multiple processes. For multi-server deployments, configure a shared Redis store.
 - No production-grade virus scanning of uploaded files.
+- Uploaded text and Office files are validated structurally only; no antivirus scanning is provided.
 - The `owner` role in the schema is defined but not assigned by any current route.
 - No HTTPS termination is included; deploy behind a reverse proxy (nginx, Caddy) in production.
 

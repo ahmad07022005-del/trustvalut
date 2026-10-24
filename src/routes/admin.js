@@ -25,10 +25,10 @@ const { writeAuditEvent } = require('../lib/audit');
 const PAGE_SIZE = 50;
 
 const ALLOWED_ACTIONS  = new Set([
-  'document.upload', 'document.download',
+  'document.upload', 'document.download', 'document.edit', 'document.delete',
   'permission.grant', 'permission.revoke',
   'auth.login', 'auth.logout',
-  'admin.deactivate', 'admin.activate',
+  'admin.deactivate', 'admin.activate', 'admin.category.delete',
 ]);
 const ALLOWED_OUTCOMES = new Set(['success', 'denied', 'error']);
 
@@ -179,6 +179,26 @@ function createAdminRouter(db) {
     // Import csrfToken for the CSRF hidden field in the deactivate/activate forms.
     const { csrfToken } = require('../middleware/csrf');
     res.render('admin/users', { users, user: req.session.user, token: csrfToken(req) });
+  });
+
+  router.get('/categories', (req, res) => {
+    const result = db.exec(`SELECT c.id, c.name, COUNT(d.id)
+      FROM categories c LEFT JOIN documents d ON d.category_id = c.id AND d.is_deleted = 0
+      GROUP BY c.id ORDER BY c.name`);
+    const categories = result.length ? result[0].values.map(([id, name, documentCount]) => ({ id, name, documentCount })) : [];
+    const { csrfToken } = require('../middleware/csrf');
+    return res.render('admin/categories', { categories, user: req.session.user, token: csrfToken(req) });
+  });
+
+  router.post('/categories/:id/delete', verifyCsrf, (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id) || id <= 0 || String(id) !== req.params.id) return res.status(400).json({ error: 'Invalid category ID' });
+    const result = db.exec('SELECT id FROM categories WHERE id = ?', [id]);
+    if (!result.length || !result[0].values.length) return res.status(404).json({ error: 'Category not found' });
+    db.run('DELETE FROM categories WHERE id = ?', [id]);
+    req.app.locals.persistDb();
+    writeAuditEvent(db, req.app.locals.persistDb, { actorId: req.session.user.id, action: 'admin.category.delete', resource: `category:${id}`, outcome: 'success', detail: { categoryId: id }, ipAddress: req.ip });
+    return res.redirect('/admin/categories');
   });
 
   return router;

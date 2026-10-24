@@ -1,0 +1,7 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8" /><title>Categories – TrustVault Admin</title></head><body>
+<h1>Categories</h1><p><a href="/admin/audit">Audit log</a> | <a href="/admin/users">Manage users</a></p>
+<% if (categories.length === 0) { %><p>No categories.</p><% } else { %>
+<table><tr><th>Name</th><th>Documents</th><th>Action</th></tr>
+<% categories.forEach(c => { %><tr><td><%= c.name %></td><td><%= c.documentCount %></td><td><form method="POST" action="/admin/categories/<%= c.id %>/delete"><input type="hidden" name="_csrf" value="<%= token %>" /><button type="submit">Delete</button></form></td></tr><% }) %>
+</table><% } %></body></html>

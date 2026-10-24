@@ -54,8 +54,8 @@ function computeRowHash(id, actorId, action, resource, outcome, prevHash) {
 
 /**
  * Sanitize a value for safe inclusion in audit detail JSON.
- * Strips any key whose name contains 'password', 'secret', 'token', or
- * 'cookie' (case-insensitive) from plain objects.
+ * Recursively strips any key whose name contains 'password', 'secret',
+ * 'token', or 'cookie' (case-insensitive) from objects and arrays.
  *
  * @param {object|null} obj
  * @returns {string} JSON string
@@ -64,12 +64,16 @@ function safeDetail(obj) {
   if (!obj || typeof obj !== 'object') return null;
 
   const forbidden = /password|secret|token|cookie/i;
-  const clean = {};
-  for (const [k, v] of Object.entries(obj)) {
-    if (!forbidden.test(k)) {
-      clean[k] = v;
+  function cleanValue(value) {
+    if (Array.isArray(value)) return value.map(cleanValue);
+    if (!value || typeof value !== 'object') return value;
+    const clean = {};
+    for (const [k, v] of Object.entries(value)) {
+      if (!forbidden.test(k)) clean[k] = cleanValue(v);
     }
+    return clean;
   }
+  const clean = cleanValue(obj);
   return JSON.stringify(clean);
 }
 
