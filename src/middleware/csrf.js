@@ -43,6 +43,14 @@ function verifyCsrf(req, res, next) {
   const stored    = req.session && req.session.csrfToken;
 
   if (!submitted || !stored || submitted !== stored) {
+    const formViews = { '/login': 'login', '/register': 'register' };
+    const view = formViews[req.path];
+    if (view && req.accepts('html')) {
+      return res.status(403).render(view, {
+        error: 'Your form session expired or your browser did not send its session cookie. Refresh the page and try again.',
+        token: csrfToken(req),
+      });
+    }
     return res.status(403).json({ error: 'Invalid or missing CSRF token' });
   }
 

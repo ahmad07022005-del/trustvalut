@@ -56,13 +56,18 @@ function createApp(db = null) {
     throw new Error('SESSION_SECRET must be at least 32 characters in production');
   }
 
+  const isProduction = process.env.NODE_ENV === 'production';
   const explicitSecureCookie = process.env.SESSION_COOKIE_SECURE;
-  const secureCookie = explicitSecureCookie === 'true'
-    ? true
-    : explicitSecureCookie === 'false'
-      ? false
-      : process.env.NODE_ENV === 'production';
-  if (process.env.NODE_ENV === 'production' && secureCookie === false) {
+  // Plain HTTP is the supported local-development transport. An accidentally
+  // copied production value must not make the local login form lose its session.
+  // Production remains secure by default; false is an explicit local override.
+  const secureCookie = isProduction
+    ? explicitSecureCookie !== 'false'
+    : false;
+  if (!isProduction && explicitSecureCookie === 'true') {
+    console.warn('[warn] SESSION_COOKIE_SECURE=true is ignored in development; use HTTPS with NODE_ENV=production for secure cookies.');
+  }
+  if (isProduction && secureCookie === false) {
     console.warn('[warn] SESSION_COOKIE_SECURE=false disables HTTPS-only session cookies; use only for local HTTP testing.');
   }
 

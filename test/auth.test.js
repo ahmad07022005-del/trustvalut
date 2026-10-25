@@ -159,12 +159,13 @@ test('deactivated accounts cannot log in with otherwise valid credentials', asyn
   assert.match(loginRes.text, /deactivated/i);
 });
 
-test('explicit SESSION_COOKIE_SECURE override controls cookie transport', async () => {
+test('development mode always supports local HTTP session cookies', async () => {
   const previous = process.env.SESSION_COOKIE_SECURE;
   try {
     process.env.SESSION_COOKIE_SECURE = 'true';
     const secureRes = await supertest(createApp(db)).get('/auth/login');
-    assert.equal(secureRes.headers['set-cookie'], undefined, 'secure cookies must not be emitted over plain HTTP');
+    assert.ok(secureRes.headers['set-cookie'], 'development must emit a session cookie over HTTP');
+    assert.doesNotMatch(secureRes.headers['set-cookie'].join('; '), /; Secure/i);
 
     process.env.SESSION_COOKIE_SECURE = 'false';
     const localRes = await supertest(createApp(db)).get('/auth/login');
@@ -210,9 +211,11 @@ test('POST /auth/login fails for non-existent user with 401 (no enumeration)', a
 test('POST /auth/login without CSRF token returns 403', async () => {
   const res = await request
     .post('/auth/login')
+    .set('Accept', 'text/html')
     .send('email=any@example.com&password=SecurePass1234!');
 
   assert.equal(res.status, 403);
+  assert.match(res.text, /form session expired|browser did not send/i);
 });
 
 // ── 4. Logout ─────────────────────────────────────────────────────────────────
