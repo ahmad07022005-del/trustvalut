@@ -162,6 +162,16 @@ For production:
 
 See [THREATS.md](THREATS.md) for the full threat model.
 
+
+## 🎥 Project Demo
+
+Watch the complete TrustVault demonstration video:
+
+[▶ Watch TrustVault Demo](https://youtu.be/Rx5zWcJqGmA)
+
+The video demonstrates document uploading, file management, sharing permissions, access management, and other application features.
+
+
 ## License
 
 MIT
