@@ -13,6 +13,7 @@ Threat inventory with implementation and verification status.
 | Direct storage access | Files stored in `./uploads/` (not under any `express.static` path); UUID storage names | **VERIFIED** | Code inspection: no `express.static` mounted; `test/documents.test.js` checks UUID names |
 | Revoked permission reused | `revoked_at IS NULL` checked on every new download request; no session-cached grants | **VERIFIED** | `test/permissions.test.js` — `grantee loses access immediately after revocation` |
 | Viewer privilege escalation | Role derived from DB row at login; stored in session server-side; never read from client input | **VERIFIED** | `test/auth.test.js` — role is always `viewer` after registration; `requireRole` tested in audit tests |
+| Unsafe administrator bootstrap | No public role-change route; local operator script requires an explicit existing email and database path, creates a non-overwriting backup, persists through SQL.js, and verifies the result | **VERIFIED** | `scripts/promote-admin.js`, `test/promote-admin.test.js`; local-only procedure in `README.md` |
 | Search result leakage | Search query filtered by same ownership/active-grant WHERE clause as document list | **VERIFIED** | `test/documents.test.js` — `GET /documents?q= does not return documents owned by another user` |
 | Audit record tampering | Append-only INSERT path; no application DELETE/UPDATE route; SHA-256 hash chain per row | **VERIFIED** | `test/audit.test.js` — chain verification, tamper detection, no-delete-route tests |
 | Malicious file upload | MIME type allowlist in `fileFilter`; magic-byte validation after multer writes to disk; file deleted on mismatch; 10 MB size limit | **VERIFIED** | `test/documents.test.js` — disallowed type 400, magic-byte mismatch 400, size limit 413 |
@@ -33,6 +34,7 @@ Threat inventory with implementation and verification status.
 - The audit hash chain is stored in the same writable SQLite database. A privileged attacker with database write access can recompute hashes. Production deployments should supplement this with an independently retained append-only log or signed external checkpoints.
 - Rate limiting uses an in-memory store (per process). Counters reset on server restart and do not synchronise across multiple processes or servers. For a multi-process or multi-server deployment, replace the store with a shared Redis store.
 - The `owner` role is defined in the schema but not assigned by any current route; all registrations receive the `viewer` role. Admin promotion requires direct database access.
+- The administrator bootstrap script is local-only. It cannot update a Render Free deployment, and any SQL.js role change on Render Free would be lost with the service's ephemeral filesystem on restart, redeploy, or spin-down.
 - No HTTPS is included in the application. Deploy behind a TLS-terminating reverse proxy in production.
 - Uploaded files are not virus-scanned.
 - Preview isolation is not a separate origin; only PDF and image MIME types are served inline, with `nosniff` and authorization checks. A separate origin is recommended for higher-assurance deployments.

@@ -6,7 +6,7 @@ TrustVault is a security-focused document management platform. Confidential docu
 
 ## Project status
 
-**Implemented and test-verified** (109 automated tests passing):
+**Implemented and test-verified** (112 automated tests passing):
 
 - Role-based authentication (admin, viewer); bcrypt password hashing
 - Private document uploads (PDF, TXT, PNG, JPEG, DOCX; max 10 MB; magic-byte validation)
@@ -65,24 +65,31 @@ npm run dev
 
 Visit `http://localhost:3000/auth/register` to create your first account.
 
-### 5. Create a demo admin account
+### 5. Create a local administrator (operator-only)
 
-After registering your first account, promote it to admin directly in the database:
+Registration always creates a `viewer`. There is no public role-selection or role-change route. To promote an already-registered account in a local database, first stop the local server and make a separate copy of the database. Then run the dedicated operator script with an explicit database path and email:
 
 ```bash
-node -e "
-const { getDb, closeDb } = require('./src/db/database');
-getDb().then(db => {
-  db.run(\"UPDATE users SET role = 'admin' WHERE email = ?\", ['your@email.com']);
-  const { persist } = require('./src/db/database');
-  persist();
-  closeDb();
-  console.log('Done');
-});
-"
+npm run promote-admin -- \
+  --db "$PWD/data/trustvault.db" \
+  --email "your@email.com" \
+  --backup "$PWD/data/trustvault.before-admin.db"
 ```
 
-Then visit `http://localhost:3000/admin/audit` to access the audit dashboard.
+PowerShell equivalent:
+
+```powershell
+npm run promote-admin -- `
+  --db (Join-Path (Get-Location) 'data\trustvault.db') `
+  --email 'your@email.com' `
+  --backup (Join-Path (Get-Location) 'data\trustvault.before-admin.db')
+```
+
+The script refuses `:memory:`, missing or non-file database paths, missing emails, inactive accounts, and emails that do not match exactly one existing user. It refuses to overwrite an existing backup, creates the backup before opening the database, updates only the selected user, uses the existing SQL.js `getDb()`/`persist()`/`closeDb()` functions, and verifies the final role.
+
+This procedure is **local-only**. It changes only the database file supplied to the command. Running it on a laptop does **not** promote an account on Render. Render Free has no Shell access or persistent disk, and the deployment's local SQL.js database is not a durable administration mechanism. Do not add a public bootstrap endpoint or commit database files, passwords, session secrets, or backup files.
+
+After the command succeeds, start the local server and visit `http://localhost:3000/admin/audit` with the promoted account. An active database-backed administrator should receive the HTML audit dashboard; an authenticated viewer should receive HTTP 403.
 
 ## Environment variables
 
@@ -106,6 +113,8 @@ Never commit `.env`. Use `.env.example` as a template.
 > **Rate limiting note:** limits use an in-memory store and reset on server restart. They do not synchronise across multiple processes. For multi-server deployments, configure a shared Redis store.
 
 ## API routes
+
+See [API.md](API.md) for verified request access rules, permission semantics, CSRF expectations, and response behavior.
 
 | Method | Path | Auth required | Description |
 |---|---|---|---|

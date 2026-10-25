@@ -69,3 +69,29 @@ Add rate limiting on login and upload endpoints. Add a seed script for demo acco
 ## Future entries
 
 Add a new dated entry after each significant AI-assisted implementation or review. Record the actual prompt, output, specific issues found, corrections, verification results, and real commit URL. Do not invent errors, test results, or commit links.
+
+---
+
+## Entry 3 — 2026-10-25
+
+### Activity
+Investigated how to activate the first administrator for the existing TrustVault deployment. The verified source showed that registration assigns `viewer`, admin routes require a database-backed active `admin` role, and no public role-change route exists. Render Free limitations were checked separately: the service has no Shell access or persistent disk, and local SQL.js files are ephemeral.
+
+### AI assistance
+Manus reviewed the actual repository source, existing tests, and official Render documentation. The user explicitly required a local-only operator procedure, no public bootstrap endpoint, no deployment changes, and no exposure of secrets or private data.
+
+### Output produced
+- Added `scripts/promote-admin.js`, which requires an explicit existing database path and registered email, creates a non-overwriting backup before mutation, uses the existing SQL.js persistence functions, and verifies the selected account's role.
+- Added focused bootstrap tests for successful promotion, unknown-email safety, backup creation, and explicit-path validation.
+- Updated `README.md` with local-only POSIX and PowerShell instructions and a Render warning.
+- Added verified route and permission documentation in `API.md`.
+- Updated `THREATS.md` with bootstrap and Render Free persistence limitations.
+
+### Review and verification
+JavaScript syntax checks passed for `src`, `scripts`, and `test`. The focused bootstrap tests passed 3/3. The complete `npm test` suite passed 112/112 with 0 failures, 0 skipped tests, and 0 cancellations. Existing viewer-registration and admin-access tests remain the source of truth for those behaviors.
+
+### Commit
+No commit or push was made during this entry.
+
+### Next step
+Obtain owner approval before committing or pushing these documentation and local-tooling changes.
